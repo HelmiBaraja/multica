@@ -158,8 +158,18 @@ This is a pure refactor. `VerifyCode` and `GoogleLogin` both end with the same s
 - Test: `server/internal/handler/handler_test.go` (existing tests must keep passing unchanged)
 
 **Interfaces:**
-- Consumes: `Queries.SetUserPasswordHash` (not yet), `h.issueJWT`, `auth.SetAuthCookies`, `h.CFSigner`, `obsmetrics.RecordEvent`
-- Produces: `func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, user db.User, isNew bool)` — writes the full success response and returns nothing; callers must `return` immediately after calling it.
+- Consumes: `h.issueJWT`, `auth.SetAuthCookies`, `h.CFSigner`
+- Produces: `func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, user db.User, cdnTTL time.Duration)` — writes the full success response and returns nothing; callers must `return` immediately after calling it.
+
+**Signup analytics stay at the call sites and are NOT part of this helper.** The two existing tails are not identical, and folding them together would silently change behavior:
+
+| | `VerifyCode` | `GoogleLogin` |
+| --- | --- | --- |
+| CDN cookie TTL | `auth.AuthTokenTTL()` (auth.go:444) | hardcoded `72 * time.Hour` (auth.go:650) |
+| Signup event | plain `analytics.Signup(...)` | also stamps `evt.Properties["auth_method"] = "google"` (auth.go:603) |
+| Event position | immediately before `issueJWT` | before a name/avatar profile-update block that sits between it and `issueJWT` (auth.go:606-631) |
+
+So the CDN TTL is an explicit parameter, and each caller keeps its own analytics line in its own position.
 
 - [ ] **Step 1: Run the existing auth tests to capture the green baseline**
 
@@ -174,19 +184,22 @@ Expected: PASS. Record the names that ran — the same set must pass after the r
 In `server/internal/handler/auth.go`, after `issueJWT`:
 
 ```go
-// completeLogin writes the standard successful-authentication response:
-// signup analytics on the new-user edge, a JWT, HttpOnly auth + CSRF
-// cookies, CloudFront signed cookies when the CDN is private, and the
-// LoginResponse body. Every authentication entry point must go through
-// here — the cookie and CSRF steps are easy to omit in a hand-rolled copy,
-// and omitting them yields a token the browser cannot use.
+// completeLogin writes the standard successful-authentication response: a
+// JWT, the HttpOnly auth cookie plus its CSRF companion, CloudFront signed
+// cookies when the CDN serves private content, and the LoginResponse body.
+// Every authentication entry point ends here — the paired cookie calls are
+// easy to omit in a hand-rolled copy, and omitting them yields a token the
+// browser cannot actually use.
+//
+// Signup analytics deliberately stay at the call sites: each entry point
+// stamps its own auth_method, and the Google path fires its event before a
+// profile-update step that must not move.
+//
+// cdnTTL bounds only the CloudFront cookies. It is NOT the JWT lifetime,
+// which issueJWT takes from auth.AuthTokenTTL().
 //
 // Callers must return immediately: this function owns the response.
-func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, user db.User, isNew bool) {
-	if isNew {
-		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.Signup(uuidToString(user.ID), user.Email, signupSourceFromRequest(r)))
-	}
-
+func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, user db.User, cdnTTL time.Duration) {
 	tokenString, err := h.issueJWT(user)
 	if err != nil {
 		if errors.Is(err, auth.ErrTemporarilyDisabledUser) {
@@ -205,7 +218,7 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, user db.
 
 	// CloudFront signed cookies for CDN access.
 	if h.CFSigner != nil {
-		for _, cookie := range h.CFSigner.SignedCookies(time.Now().Add(auth.AuthTokenTTL())) {
+		for _, cookie := range h.CFSigner.SignedCookies(time.Now().Add(cdnTTL)) {
 			http.SetCookie(w, cookie)
 		}
 	}
@@ -217,18 +230,28 @@ func (h *Handler) completeLogin(w http.ResponseWriter, r *http.Request, user db.
 }
 ```
 
+One accepted deviation: the error-path `slog.Warn` unifies from `"login failed"` / `"google login failed"` to `"login failed"`. The success-path `slog.Info` lines stay at their call sites, so the two paths remain distinguishable in logs.
+
 - [ ] **Step 3: Rewrite the tail of `VerifyCode` to call it**
 
-In `VerifyCode`, replace everything from `if isNew {` through the closing `writeJSON(...)` with:
+In `VerifyCode`, **keep** the existing `if isNew { obsmetrics.RecordEvent(...) }` block exactly where it is. Replace only from `tokenString, err := h.issueJWT(user)` through the closing `writeJSON(...)` with:
 
 ```go
 	slog.Info("user logged in", append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email)...)
-	h.completeLogin(w, r, user, isNew)
+	h.completeLogin(w, r, user, auth.AuthTokenTTL())
 ```
 
 - [ ] **Step 4: Rewrite the tail of `GoogleLogin` to call it**
 
-Apply the same substitution in `GoogleLogin`, keeping its own `slog.Info("user logged in via google", ...)` line immediately before the `completeLogin` call.
+Same substitution, with two differences that preserve current behavior exactly:
+
+- **Keep** its `if isNew {` block — including `evt.Properties["auth_method"] = "google"` — in its current position, before the name/avatar profile-update block. Do not move it.
+- Pass its own TTL, not `auth.AuthTokenTTL()`:
+
+```go
+	slog.Info("user logged in via google", append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email)...)
+	h.completeLogin(w, r, user, 72*time.Hour)
+```
 
 - [ ] **Step 5: Run the tests to confirm nothing changed**
 
@@ -466,8 +489,14 @@ func (h *Handler) PasswordSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Signup analytics live at the call site, matching the other entry
+	// points, so each one stamps its own auth_method.
+	evt := analytics.Signup(uuidToString(user.ID), user.Email, signupSourceFromRequest(r))
+	evt.Properties["auth_method"] = "password"
+	obsmetrics.RecordEvent(h.Analytics, h.Metrics, evt)
+
 	slog.Info("user signed up with password", append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email)...)
-	h.completeLogin(w, r, user, true)
+	h.completeLogin(w, r, user, auth.AuthTokenTTL())
 }
 ```
 
@@ -671,7 +700,8 @@ func (h *Handler) PasswordLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("user logged in with password", append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email)...)
-	h.completeLogin(w, r, user, false)
+	// No analytics here: this is a returning user, not a signup.
+	h.completeLogin(w, r, user, auth.AuthTokenTTL())
 }
 ```
 
