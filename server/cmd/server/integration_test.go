@@ -1367,3 +1367,19 @@ func TestWebSocketIntegration(t *testing.T) {
 		t.Fatalf("expected type 'issue:deleted', got '%s'", deleteMsg["type"])
 	}
 }
+
+func TestPasswordAuthRoutesAreMounted(t *testing.T) {
+	for _, path := range []string{"/auth/password/signup", "/auth/password/login"} {
+		resp, err := http.Post(testServer.URL+path, "application/json", strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		defer resp.Body.Close()
+
+		// An empty body is a 400 from the handler. A 404 means the route is
+		// not mounted at all, which is what this test guards.
+		if resp.StatusCode == http.StatusNotFound {
+			t.Fatalf("%s: route not mounted", path)
+		}
+	}
+}
