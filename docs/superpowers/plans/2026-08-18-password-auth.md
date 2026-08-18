@@ -846,70 +846,72 @@ git commit -m "feat(auth): mount password auth routes with a dedicated rate limi
 
 - [ ] **Step 1: Write the failing store test**
 
-Create or extend `packages/core/auth/store.test.ts`:
+`packages/core/auth/store.test.ts` **already exists** — extend it, do not overwrite it. It has two passing tests (`retryAuthentication`, `logout`) that must survive, and it already defines `fakeUser`, `makeStorage()`, and `makeApi()`. Reuse those rather than introducing a parallel set of helpers.
+
+Do **not** add a `// @vitest-environment node` directive. `store.ts` imports `identifyAnalytics` from `../analytics`, and `packages/core/analytics/index.ts` branches on `typeof window` at lines 91, 109, 399, and 444 — exactly the case CLAUDE.md says must not get the node directive.
+
+Widen the existing `makeApi` to accept overrides and to carry the two new methods:
 
 ```ts
-// @vitest-environment node
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createAuthStore } from "./store";
-import type { ApiClient } from "../api/client";
-
-const user = { id: "u-1", email: "a@example.com", name: "A" };
-
-function makeStore(overrides: Partial<ApiClient> = {}, cookieAuth = false) {
-  const storage = {
-    getItem: vi.fn(),
-    setItem: vi.fn(),
-    removeItem: vi.fn(),
-  };
-  const api = {
-    signupWithPassword: vi.fn().mockResolvedValue({ token: "t-1", user }),
-    loginWithPassword: vi.fn().mockResolvedValue({ token: "t-1", user }),
+function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
+  return {
     setToken: vi.fn(),
+    signupWithPassword: vi.fn().mockResolvedValue({ token: "t-1", user: fakeUser }),
+    loginWithPassword: vi.fn().mockResolvedValue({ token: "t-1", user: fakeUser }),
     ...overrides,
   } as unknown as ApiClient;
-  const store = createAuthStore({ api, storage, cookieAuth });
-  return { store, api, storage };
 }
+```
 
-describe("auth store credentials", () => {
-  beforeEach(() => vi.clearAllMocks());
+Then append a second `describe` block:
 
+```ts
+describe("authStore credentials", () => {
   it("logs in with a password and marks the session authenticated", async () => {
-    const { store, api } = makeStore();
-    const result = await store.getState().loginWithPassword("a@example.com", "correct-horse");
+    const storage = makeStorage();
+    const api = makeApi();
+    const store = createAuthStore({ api, storage });
 
-    expect(api.loginWithPassword).toHaveBeenCalledWith("a@example.com", "correct-horse");
-    expect(result).toEqual(user);
+    const result = await store.getState().loginWithPassword("alice@example.com", "correct-horse");
+
+    expect(api.loginWithPassword).toHaveBeenCalledWith("alice@example.com", "correct-horse");
+    expect(result).toEqual(fakeUser);
     expect(store.getState().status).toBe("authenticated");
-    expect(store.getState().user).toEqual(user);
+    expect(store.getState().user).toEqual(fakeUser);
   });
 
   it("persists the token in token mode but not in cookie mode", async () => {
-    const tokenMode = makeStore({}, false);
-    await tokenMode.store.getState().loginWithPassword("a@example.com", "correct-horse");
-    expect(tokenMode.storage.setItem).toHaveBeenCalledWith("multica_token", "t-1");
+    const tokenStorage = makeStorage();
+    const tokenStore = createAuthStore({ api: makeApi(), storage: tokenStorage });
+    await tokenStore.getState().loginWithPassword("alice@example.com", "correct-horse");
+    expect(tokenStorage.snapshot().multica_token).toBe("t-1");
 
-    const cookieMode = makeStore({}, true);
-    await cookieMode.store.getState().loginWithPassword("a@example.com", "correct-horse");
-    expect(cookieMode.storage.setItem).not.toHaveBeenCalled();
+    const cookieStorage = makeStorage();
+    const cookieStore = createAuthStore({ api: makeApi(), storage: cookieStorage, cookieAuth: true });
+    await cookieStore.getState().loginWithPassword("alice@example.com", "correct-horse");
+    expect(cookieStorage.snapshot().multica_token).toBeUndefined();
   });
 
   it("signs up and authenticates in one call", async () => {
-    const { store, api } = makeStore();
-    await store.getState().signupWithPassword("a@example.com", "correct-horse");
+    const api = makeApi();
+    const store = createAuthStore({ api, storage: makeStorage() });
 
-    expect(api.signupWithPassword).toHaveBeenCalledWith("a@example.com", "correct-horse", undefined);
+    await store.getState().signupWithPassword("alice@example.com", "correct-horse");
+
+    expect(api.signupWithPassword).toHaveBeenCalledWith("alice@example.com", "correct-horse", undefined);
     expect(store.getState().status).toBe("authenticated");
   });
 
   it("leaves the session unauthenticated when login rejects", async () => {
-    const { store } = makeStore({
-      loginWithPassword: vi.fn().mockRejectedValue(new Error("invalid email or password")),
+    const store = createAuthStore({
+      api: makeApi({
+        loginWithPassword: vi.fn().mockRejectedValue(new Error("invalid email or password")),
+      }),
+      storage: makeStorage(),
     });
 
     await expect(
-      store.getState().loginWithPassword("a@example.com", "nope"),
+      store.getState().loginWithPassword("alice@example.com", "nope"),
     ).rejects.toThrow("invalid email or password");
     expect(store.getState().user).toBeNull();
   });
@@ -922,7 +924,9 @@ describe("auth store credentials", () => {
 pnpm --filter @multica/core test auth/store.test.ts
 ```
 
-Expected: FAIL — `loginWithPassword is not a function`.
+Expected: FAIL — `loginWithPassword is not a function`, with the two pre-existing tests still passing.
+
+**Confirm the run actually matched your file.** `packages/core/vitest.config.ts` sets `passWithNoTests: true`, so a filter matching nothing reports success. The output must name `auth/store.test.ts` and show six tests (two existing plus your four); if it shows "no test files found" or zero tests, the filter missed and you have proven nothing.
 
 - [ ] **Step 3: Add the client methods**
 
