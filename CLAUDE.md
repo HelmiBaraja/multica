@@ -220,6 +220,15 @@ Rules:
 - Run an explicitly authorized real-agent smoke test with `(cd server && MULTICA_RUN_REAL_AGENT_SMOKE=1 go test -tags=agentintegration ./pkg/agent -run '<test-name>' -count=1 -v)`. This command may access an authenticated account and consume quota.
 - When adding a default agent command, add it to `scripts/agent-cli-command-names.txt`; the normal Linux/macOS test entry points fail on ambient agent CLI execution.
 
+## Library Docs
+
+Use the Context7 CLI (`c7`, package `context7` on npm — `npm i -g context7`, or `npx context7`) to pull current docs when an external library or framework's (Next.js, Chi, sqlc, gorilla/websocket, Expo, etc.) API surface is uncertain, rather than relying on training-data memory:
+
+```bash
+c7 <projectname> <query...>       # e.g. c7 nextjs data fetching strategies
+c7 search <term>                  # find a project's exact name
+```
+
 ## Verification
 
 For code changes, run the narrowest useful checks while iterating, then run broader verification when risk justifies it or when asked.
