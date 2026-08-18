@@ -90,13 +90,25 @@ VALUES ($1, $2, $3, $4)
 RETURNING *;
 ```
 
-- [ ] **Step 4: Run the migration and regenerate sqlc**
+- [ ] **Step 4: Apply the migration, then regenerate sqlc**
+
+Both halves are required. `make sqlc` is pure code generation and never touches a database, so without `make migrate-up` the dev database keeps its old schema and Task 3's DB-backed handler tests fail on a missing column — a failure that reads like a handler bug rather than an unapplied migration.
+
+```bash
+make migrate-up
+```
 
 ```bash
 make sqlc
 ```
 
-Expected: `server/pkg/db/generated/models.go` gains `PasswordHash pgtype.Text` on `User`, and `user.sql.go` gains `SetUserPasswordHash`.
+Verify the column actually landed:
+
+```bash
+docker exec multica-postgres-1 psql -U multica -d multica -c '\d "user"' | grep password_hash
+```
+
+Expected: a `password_hash | text` row, and `server/pkg/db/generated/models.go` gains `PasswordHash pgtype.Text` on `User`.
 
 - [ ] **Step 5: Verify the build still compiles**
 
