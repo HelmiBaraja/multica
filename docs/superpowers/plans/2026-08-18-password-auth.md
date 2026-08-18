@@ -972,14 +972,19 @@ sed -n '1,200p' apps/docs/content/docs/developers/conventions.zh.mdx
 
 Follow its glossary and tone rules for the `zh-Hans` strings. Do not invent product terms.
 
-- [ ] **Step 2: Update `en/auth.json`**
+- [ ] **Step 2: Update `en/auth.json` — ADD ONLY, remove nothing**
 
-Replace the `signin`, `common`, and `errors` blocks and add a `signup` block. Remove the now-dead `signin.sending`, `signin.google`, `verify.*`, `errors.send_failed`, `errors.resend_failed`, and `errors.code_invalid` keys.
+This task is **purely additive**. `packages/views/i18n/resources-types.ts:7` types the dictionary as `typeof en/auth.json`, and `login-page.tsx` still reads `verify.*` and `signin.sending` until Task 8. Deleting a key here would fail typecheck and land a red commit. The dead keys (`signin.sending`, `signin.google`, `verify.*`, `errors.send_failed`, `errors.resend_failed`, `errors.code_invalid`) are removed in **Task 8**, in the same commit that stops the component referencing them.
+
+Add the `signup` block, and add the new keys to `signin`, `common`, and `errors` while leaving every existing key in place. `signin.description` is the one existing value that changes, because it no longer promises a code.
 
 ```json
   "signin": {
     "title": "Sign in to Multica",
     "description": "Enter your email and password",
+    "continue": "Continue",
+    "sending": "Sending code...",
+    "google": "Continue with Google",
     "submit": "Sign in",
     "submitting": "Signing in...",
     "switch_to_signup": "Need an account? Sign up"
@@ -1003,17 +1008,28 @@ Replace the `signin`, `common`, and `errors` blocks and add a `signup` block. Re
   },
   "errors": {
     "server_unreachable": "Make sure the server is running.",
+    "send_failed": "Failed to send code.",
+    "resend_failed": "Failed to resend code",
+    "code_invalid": "Invalid or expired code",
     "credentials_invalid": "Invalid email or password",
     "signup_failed": "Could not create your account.",
     "cli_auth_failed": "Failed to authorize CLI. Please log in again."
   },
 ```
 
-Leave the `cli`, `web`, and `desktop` blocks untouched.
+Leave the `verify`, `cli`, `web`, and `desktop` blocks untouched — Task 8 removes `verify`.
 
 - [ ] **Step 3: Apply the same key set to the other three locales**
 
-Translate the values for `zh-Hans`, `ja`, and `ko`. Every key present in `en/auth.json` must exist in all three, and no locale may keep a key `en` no longer has.
+Translate the new values for `zh-Hans`, `ja`, and `ko`, again adding only. Every key present in `en/auth.json` must exist in all three.
+
+- [ ] **Step 3b: Verify the workspace still typechecks**
+
+```bash
+pnpm --filter @multica/views typecheck
+```
+
+Expected: PASS. This is the check that proves the task stayed additive — a removed key would break `login-page.tsx`, which still reads the OTP copy until Task 8.
 
 - [ ] **Step 4: Verify the four files have identical key sets**
 
@@ -1042,11 +1058,12 @@ git commit -m "feat(auth): add credential copy to all locales"
 
 **Files:**
 - Modify: `packages/views/auth/login-page.tsx`
+- Modify: `packages/views/locales/{en,zh-Hans,ja,ko}/auth.json` (delete the now-dead OTP keys)
 - Test: `packages/views/auth/login-page.test.tsx`
 
 **Interfaces:**
 - Consumes: `useAuthStore().loginWithPassword`, `useAuthStore().signupWithPassword`, `useConfigStore().allowSignup`, the Task 7 locale keys
-- Produces: `LoginPage` props become `{ logo?, onSuccess, cliCallback?, onTokenObtained?, extra? }` — `google` and `onGoogleLogin` are **removed**. `redirectToCliCallback` and `validateCliCallback` keep their current signatures.
+- Produces: `LoginPage` props become `{ logo?, onSuccess, cliCallback?, onTokenObtained?, extra? }` — `google` and `onGoogleLogin` are **removed**. `redirectToCliCallback` and `validateCliCallback` keep their current signatures. (`extra` survives this task and is removed in Task 9, which owns its last call site.)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1377,18 +1394,44 @@ The credentials render block:
 
 Import `useConfigStore` from `@multica/core/config`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 4: Delete the now-dead OTP locale keys**
+
+Task 7 deliberately left these in place, because the component still read them. It no longer does, so remove from all four `auth.json` files: `signin.continue`, `signin.sending`, `signin.google`, the whole `verify` block, `errors.send_failed`, `errors.resend_failed`, and `errors.code_invalid`.
+
+Also check whether `errors.server_unreachable` still has a reader — `handleSendCode` was its only one:
+
+```bash
+grep -rn "server_unreachable" packages apps --include='*.tsx' --include='*.ts' | grep -v node_modules | grep -v locales
+```
+
+If that returns nothing, delete the key too.
+
+Then confirm the four files still agree:
+
+```bash
+for l in en zh-Hans ja ko; do
+  echo "$l: $(node -e "
+    const f=require('./packages/views/locales/$l/auth.json');
+    const walk=(o,p='')=>Object.entries(o).flatMap(([k,v])=>typeof v==='object'?walk(v,p+k+'.'):[p+k]);
+    console.log(walk(f).sort().join(','))
+  " | md5)"
+done
+```
+
+Expected: the same hash on all four lines.
+
+- [ ] **Step 5: Run the tests to verify they pass**
 
 ```bash
 pnpm --filter @multica/views test auth/login-page.test.tsx && pnpm --filter @multica/views typecheck
 ```
 
-Expected: PASS — all six tests.
+Expected: PASS — all six tests, and typecheck proves no surviving reader of a deleted key.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add packages/views/auth/login-page.tsx packages/views/auth/login-page.test.tsx
+git add packages/views/auth/login-page.tsx packages/views/auth/login-page.test.tsx packages/views/locales
 git commit -m "refactor(auth): rewrite the shared login page as a credentials form"
 ```
 
@@ -1398,11 +1441,13 @@ git commit -m "refactor(auth): rewrite the shared login page as a credentials fo
 
 **Files:**
 - Modify: `apps/web/app/(auth)/login/page.tsx:63,218-248`
+- Modify: `packages/views/auth/login-page.tsx` (drop the now-unused `extra` prop)
+- Modify: `packages/views/locales/{en,zh-Hans,ja,ko}/auth.json` (drop `web.prefer_desktop` / `web.download`)
 - Test: `apps/web/app/(auth)/login/page.test.tsx`
 
 **Interfaces:**
 - Consumes: the Task 8 `LoginPage` props
-- Produces: no exported change
+- Produces: `LoginPage` props become `{ logo?, onSuccess, cliCallback?, onTokenObtained? }` — `extra` is removed here, in the same commit as its last call site.
 
 - [ ] **Step 1: Remove the Google and download wiring**
 
@@ -1411,6 +1456,16 @@ In `apps/web/app/(auth)/login/page.tsx`:
 - Delete the `const googleClientId = useConfigStore((state) => state.googleClientId);` line and the `googleState` variable if it becomes unused.
 - Delete the `google={...}` prop from `<LoginPage>`.
 - Delete the `extra={...}` prop entirely. It links to `/download`, which Task 15 deletes; keeping it would render a dead link. Remove the now-unused `Link` import and the `web.prefer_desktop` / `web.download` usages.
+
+Then, in the same commit, remove the prop itself from `packages/views/auth/login-page.tsx` — its `extra?: ReactNode` declaration, the destructured parameter, and the `{extra && <div …>{extra}</div>}` render line. The web login page was its only consumer, so it is now dead. Doing this in one commit keeps both files green; splitting it would leave one of them red.
+
+Drop `web.prefer_desktop` and `web.download` from all four `auth.json` files, and verify nothing else reads them:
+
+```bash
+grep -rn "prefer_desktop\|web.download" apps packages --include='*.tsx' --include='*.ts' | grep -v node_modules | grep -v locales
+```
+
+Expected: no output. Keep the rest of the `web` block — `web.desktop_handoff.*` is still used by the desktop handoff flow in this same file.
 
 The call becomes:
 
@@ -1435,15 +1490,15 @@ In `apps/web/app/(auth)/login/page.test.tsx`, delete any case asserting the Goog
 - [ ] **Step 3: Run the tests**
 
 ```bash
-pnpm --filter @multica/web test "app/(auth)/login/page.test.tsx"
+pnpm --filter @multica/web test "app/(auth)/login/page.test.tsx" && pnpm --filter @multica/views typecheck && pnpm --filter @multica/web typecheck
 ```
 
-Expected: PASS.
+Expected: PASS. The two typechecks are what prove the `extra` removal left no orphaned consumer.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add "apps/web/app/(auth)/login/page.tsx" "apps/web/app/(auth)/login/page.test.tsx"
+git add "apps/web/app/(auth)/login/page.tsx" "apps/web/app/(auth)/login/page.test.tsx" packages/views/auth/login-page.tsx packages/views/locales
 git commit -m "refactor(auth): drop Google and download wiring from the web login route"
 ```
 
