@@ -696,6 +696,21 @@ type PasswordLoginRequest struct {
 	Password string `json:"password"`
 }
 
+// dummyPasswordHash backs the unknown-account path so a missing email costs
+// the same bcrypt round as a wrong password. Generated once rather than
+// hardcoded: a literal hash has to be exactly right for bcrypt to do real
+// work, and if it ever stopped being valid the comparison would return early
+// and quietly restore the timing difference this exists to erase. Lazy rather
+// than init() so process startup does not pay a deliberate ~60ms.
+var dummyPasswordHash = sync.OnceValue(func() []byte {
+	h, err := bcrypt.GenerateFromPassword([]byte("multica-dummy-password"), bcrypt.DefaultCost)
+	if err != nil {
+		// Unreachable: a fixed short input at the default cost cannot fail.
+		panic(fmt.Sprintf("generate dummy password hash: %v", err))
+	}
+	return h
+})
+
 // PasswordLogin authenticates an email + password pair. Every failure mode
 // returns errInvalidCredentials with the same 401 status — see the constant's
 // comment for why the cases are not distinguished.
@@ -720,7 +735,7 @@ func (h *Handler) PasswordLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Spend a bcrypt round anyway so a missing account is not measurably
 		// faster than a wrong password.
-		_ = bcrypt.CompareHashAndPassword([]byte("$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinv"), []byte(req.Password))
+		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash(), []byte(req.Password))
 		writeError(w, http.StatusUnauthorized, errInvalidCredentials)
 		return
 	}
