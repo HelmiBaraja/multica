@@ -544,6 +544,29 @@ git commit -m "feat(auth): add password signup endpoint"
 - Consumes: `h.completeLogin`, `errInvalidCredentials`, `h.Queries.GetUserByEmail`
 - Produces: `func (h *Handler) PasswordLogin(w http.ResponseWriter, r *http.Request)`; `PasswordLoginRequest{Email, Password string}`
 
+- [ ] **Step 0: Add cleanup for test-created accounts**
+
+Task 3's tests create real rows in a **shared** development database and never remove them, so every run leaves more `pw-Test…@example.com` accounts behind. Add this helper and wire it into the Task 3 tests as well as your own — same file, coherent change:
+
+```go
+// cleanupUser deletes a test-created account when the test ends. These tests
+// run against a shared development database, so without this every run leaves
+// another account behind. Safe as a plain DELETE: this schema has no foreign
+// keys or cascades, and a signup creates no dependent rows.
+func cleanupUser(t *testing.T, email string) {
+	t.Helper()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(
+			context.Background(),
+			`DELETE FROM "user" WHERE email = $1`,
+			strings.ToLower(strings.TrimSpace(email)),
+		)
+	})
+}
+```
+
+Call `cleanupUser(t, email)` immediately after generating an email in every test that signs one up — including the four Task 3 tests, which currently leak.
+
 - [ ] **Step 1: Write the failing tests**
 
 Append to `server/internal/handler/auth_password_test.go`:
@@ -553,6 +576,7 @@ Append to `server/internal/handler/auth_password_test.go`:
 func signupFixture(t *testing.T, password string) string {
 	t.Helper()
 	email := uniqueEmail(t)
+	cleanupUser(t, email)
 	rec := postJSON(t, testHandler.PasswordSignup, "/auth/password/signup", map[string]string{
 		"email":    email,
 		"password": password,
@@ -604,7 +628,15 @@ func TestPasswordLoginFailuresAreIndistinguishable(t *testing.T) {
 	// pre-existing OTP/Google account is left in. Seeded through CreateUser
 	// directly, NOT findOrCreateUser: that helper is deleted in Task 13 along
 	// with its only two callers.
-	noPassword := uniqueEmail(t)
+	//
+	// The email MUST be lowercased here. CreateUser stores exactly what it is
+	// given, while the login handler lowercases its input before looking up.
+	// A mixed-case seed would therefore never be found, and this case would
+	// silently exercise the "unknown email" path instead of the "no password
+	// set" path — the test would still pass, for the wrong reason, and one of
+	// the three failure modes would go untested.
+	noPassword := strings.ToLower(uniqueEmail(t))
+	cleanupUser(t, noPassword)
 	if _, err := testHandler.Queries.CreateUser(context.Background(), db.CreateUserParams{
 		Name:         "no-password",
 		Email:        noPassword,
