@@ -694,6 +694,24 @@ export class ApiClient {
     });
   }
 
+  async signupWithPassword(
+    email: string,
+    password: string,
+    name?: string,
+  ): Promise<LoginResponse> {
+    return this.fetch("/auth/password/signup", {
+      method: "POST",
+      body: JSON.stringify({ email, password, name }),
+    });
+  }
+
+  async loginWithPassword(email: string, password: string): Promise<LoginResponse> {
+    return this.fetch("/auth/password/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+  }
+
   async logout(): Promise<void> {
     await this.fetch("/auth/logout", { method: "POST" });
   }

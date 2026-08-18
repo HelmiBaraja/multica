@@ -26,9 +26,12 @@ function makeStorage(initial: Record<string, string> = {}): StorageAdapter & {
   };
 }
 
-function makeApi(): ApiClient {
+function makeApi(overrides: Partial<ApiClient> = {}): ApiClient {
   return {
     setToken: vi.fn(),
+    signupWithPassword: vi.fn().mockResolvedValue({ token: "t-1", user: fakeUser }),
+    loginWithPassword: vi.fn().mockResolvedValue({ token: "t-1", user: fakeUser }),
+    ...overrides,
   } as unknown as ApiClient;
 }
 
@@ -59,5 +62,56 @@ describe("authStore", () => {
     expect(onLogout).toHaveBeenCalledOnce();
     expect(store.getState().user).toBeNull();
     expect(store.getState().status).toBe("unauthenticated");
+  });
+});
+
+describe("authStore credentials", () => {
+  it("logs in with a password and marks the session authenticated", async () => {
+    const storage = makeStorage();
+    const api = makeApi();
+    const store = createAuthStore({ api, storage });
+
+    const result = await store.getState().loginWithPassword("alice@example.com", "correct-horse");
+
+    expect(api.loginWithPassword).toHaveBeenCalledWith("alice@example.com", "correct-horse");
+    expect(result).toEqual(fakeUser);
+    expect(store.getState().status).toBe("authenticated");
+    expect(store.getState().user).toEqual(fakeUser);
+  });
+
+  it("persists the token in token mode but not in cookie mode", async () => {
+    const tokenStorage = makeStorage();
+    const tokenStore = createAuthStore({ api: makeApi(), storage: tokenStorage });
+    await tokenStore.getState().loginWithPassword("alice@example.com", "correct-horse");
+    expect(tokenStorage.snapshot().multica_token).toBe("t-1");
+
+    const cookieStorage = makeStorage();
+    const cookieStore = createAuthStore({ api: makeApi(), storage: cookieStorage, cookieAuth: true });
+    await cookieStore.getState().loginWithPassword("alice@example.com", "correct-horse");
+    expect(cookieStorage.snapshot().multica_token).toBeUndefined();
+  });
+
+  it("signs up and authenticates in one call", async () => {
+    const api = makeApi();
+    const store = createAuthStore({ api, storage: makeStorage() });
+
+    await store.getState().signupWithPassword("alice@example.com", "correct-horse");
+
+    expect(api.signupWithPassword).toHaveBeenCalledWith("alice@example.com", "correct-horse", undefined);
+    expect(store.getState().status).toBe("authenticated");
+  });
+
+  it("leaves the session unauthenticated when login rejects", async () => {
+    const store = createAuthStore({
+      api: makeApi({
+        loginWithPassword: vi.fn().mockRejectedValue(new Error("invalid email or password")),
+      }),
+      storage: makeStorage(),
+    });
+
+    await expect(
+      store.getState().loginWithPassword("alice@example.com", "nope"),
+    ).rejects.toThrow("invalid email or password");
+    expect(store.getState().user).toBeNull();
   });
 });
