@@ -968,6 +968,13 @@ describe("authStore credentials", () => {
       store.getState().loginWithPassword("alice@example.com", "nope"),
     ).rejects.toThrow("invalid email or password");
     expect(store.getState().user).toBeNull();
+    // The user check alone cannot fail: the default status is "authenticating"
+    // (store.ts:46) and `user` is only ever set on the success path, so a
+    // regression that marked the session authenticated BEFORE awaiting would
+    // still leave user null and still pass. Assert the negative explicitly.
+    // `.not.toBe` rather than an exact status — a failed login leaves the
+    // status untouched, and pinning it would couple this to an incidental.
+    expect(store.getState().status).not.toBe("authenticated");
   });
 });
 ```
