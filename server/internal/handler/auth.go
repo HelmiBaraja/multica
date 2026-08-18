@@ -196,6 +196,9 @@ func (h *Handler) findOrCreateUser(ctx context.Context, email string) (user db.U
 	created, err := h.Queries.CreateUser(ctx, db.CreateUserParams{
 		Name:  name,
 		Email: email,
+		// No credential: this path is the OTP/Google entry point, which is
+		// removed in a later task. Password signup sets the hash explicitly.
+		PasswordHash: pgtype.Text{},
 	})
 	if err != nil {
 		return db.User{}, false, err

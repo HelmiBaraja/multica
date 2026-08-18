@@ -14,8 +14,8 @@ SELECT id, name, email, avatar_url FROM "user"
 WHERE id = ANY(@ids::uuid[]);
 
 -- name: CreateUser :one
-INSERT INTO "user" (name, email, avatar_url)
-VALUES ($1, $2, $3)
+INSERT INTO "user" (name, email, avatar_url, password_hash)
+VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: UpdateUser :one
