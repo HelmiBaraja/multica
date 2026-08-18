@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -416,6 +417,82 @@ func (h *Handler) PasswordSignup(w http.ResponseWriter, r *http.Request) {
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, evt)
 
 	slog.Info("user signed up with password", append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email)...)
+	h.completeLogin(w, r, user, auth.AuthTokenTTL())
+}
+
+type PasswordLoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+// dummyPasswordHash is a valid bcrypt hash with no corresponding known
+// password, generated once at first use and cached for the life of the
+// process. It exists so the "unknown email" path can spend the same bcrypt
+// round as the "wrong password" path, keeping the two indistinguishable by
+// timing.
+//
+// Deliberately generated rather than a hardcoded literal: a hand-written
+// literal is easy to get subtly wrong-length (a well-formed bcrypt hash is
+// exactly 60 bytes), and bcrypt.CompareHashAndPassword returns early on a
+// malformed hash — which would silently restore the timing gap this
+// variable exists to erase.
+var dummyPasswordHash = sync.OnceValue(func() []byte {
+	hash, err := bcrypt.GenerateFromPassword([]byte("dummy-password-for-timing-defense"), bcrypt.DefaultCost)
+	if err != nil {
+		// GenerateFromPassword only fails on a bad cost constant, which
+		// bcrypt.DefaultCost never is. Panicking here surfaces a broken
+		// build immediately rather than quietly reopening the timing oracle.
+		panic(fmt.Sprintf("dummyPasswordHash: bcrypt.GenerateFromPassword failed: %v", err))
+	}
+	return hash
+})
+
+// PasswordLogin authenticates an email + password pair. Every failure mode
+// returns errInvalidCredentials with the same 401 status — see the
+// constant's comment for why the cases are not distinguished.
+func (h *Handler) PasswordLogin(w http.ResponseWriter, r *http.Request) {
+	var req PasswordLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if email == "" || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "email and password are required")
+		return
+	}
+	if auth.IsTemporarilyDisabledUserEmail(email) {
+		writeError(w, http.StatusForbidden, auth.TemporarilyDisabledUserError)
+		return
+	}
+
+	user, err := h.Queries.GetUserByEmail(r.Context(), email)
+	if err != nil {
+		// Spend a bcrypt round anyway so a missing account is not measurably
+		// faster than a wrong password.
+		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash(), []byte(req.Password))
+		writeError(w, http.StatusUnauthorized, errInvalidCredentials)
+		return
+	}
+
+	if !user.PasswordHash.Valid || user.PasswordHash.String == "" {
+		writeError(w, http.StatusUnauthorized, errInvalidCredentials)
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash.String), []byte(req.Password)); err != nil {
+		writeError(w, http.StatusUnauthorized, errInvalidCredentials)
+		return
+	}
+
+	if auth.IsTemporarilyDisabledUser(uuidToString(user.ID), user.Email) {
+		writeError(w, http.StatusForbidden, auth.TemporarilyDisabledUserError)
+		return
+	}
+
+	slog.Info("user logged in with password", append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email)...)
+	// No analytics here: this is a returning user, not a signup.
 	h.completeLogin(w, r, user, auth.AuthTokenTTL())
 }
 
