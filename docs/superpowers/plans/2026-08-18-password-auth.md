@@ -2009,6 +2009,8 @@ In `server/cmd/server/router.go`, remove the three route lines and the now-unuse
 
 In `server/internal/handler/config.go`, delete the `GoogleClientID` struct field and its assignment. In `.env.example`, delete `GOOGLE_CLIENT_ID` and the comment block above it.
 
+Also fix the rate-limit summary comment at `.env.example:24-25`. It currently reads "Defaults are 5 for send-code/google and 20 for verify-code" — both of those limits disappear with the routes you are deleting in Step 2, and Task 5 added a 10/min login limit the summary never mentioned. Rewrite it to describe what actually remains: `RATE_LIMIT_AUTH` at 5/min for signup and `RATE_LIMIT_AUTH_LOGIN` at 10/min for login. Delete the `RATE_LIMIT_AUTH_VERIFY` entry too, since `authVerifyRL` goes with the OTP routes.
+
 - [ ] **Step 4: Drop the verification-code plumbing**
 
 ```bash
