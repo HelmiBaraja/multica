@@ -116,9 +116,9 @@ Expected: a `password_hash | text` row, and `server/pkg/db/generated/models.go` 
 cd server && go build ./...
 ```
 
-Expected: FAIL — `h.Queries.CreateUser` in `auth.go` now misses the `PasswordHash` field. This is expected; fix it in the next step.
+Expected: PASS. The existing call site uses a **keyed** struct literal (`db.CreateUserParams{Name: …, Email: …}`), and Go zero-values omitted fields in keyed literals — only unkeyed literals break when a field is added. So the new column does not break the build, and Step 6 is documentation rather than repair.
 
-- [ ] **Step 6: Fix the existing CreateUser call site**
+- [ ] **Step 6: State the no-credential invariant at the existing call site**
 
 In `server/internal/handler/auth.go`, inside `findOrCreateUser`, the `CreateUser` call becomes:
 
