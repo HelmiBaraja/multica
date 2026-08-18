@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement, ReactNode } from "react";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -27,10 +27,11 @@ function renderWithI18n(ui: ReactElement) {
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const mockSendCode = vi.hoisted(() => vi.fn());
-const mockVerifyCode = vi.hoisted(() => vi.fn());
+const mockLoginWithPassword = vi.hoisted(() => vi.fn());
+const mockSignupWithPassword = vi.hoisted(() => vi.fn());
 const mockApiListWorkspaces = vi.hoisted(() => vi.fn());
-const mockApiVerifyCode = vi.hoisted(() => vi.fn());
+const mockApiLoginWithPassword = vi.hoisted(() => vi.fn());
+const mockApiSignupWithPassword = vi.hoisted(() => vi.fn());
 const mockApiSetToken = vi.hoisted(() => vi.fn());
 const mockApiGetMe = vi.hoisted(() => vi.fn());
 const mockApiIssueCliToken = vi.hoisted(() => vi.fn());
@@ -47,13 +48,16 @@ vi.mock("@multica/core/auth", () => ({
   useAuthStore: Object.assign(
     // Zustand hook form — component may call useAuthStore(selector)
     (selector?: (s: unknown) => unknown) => {
-      const state = { sendCode: mockSendCode, verifyCode: mockVerifyCode };
+      const state = {
+        loginWithPassword: mockLoginWithPassword,
+        signupWithPassword: mockSignupWithPassword,
+      };
       return selector ? selector(state) : state;
     },
     {
       getState: () => ({
-        sendCode: mockSendCode,
-        verifyCode: mockVerifyCode,
+        loginWithPassword: mockLoginWithPassword,
+        signupWithPassword: mockSignupWithPassword,
       }),
     },
   ),
@@ -62,7 +66,8 @@ vi.mock("@multica/core/auth", () => ({
 vi.mock("@multica/core/api", () => ({
   api: {
     listWorkspaces: mockApiListWorkspaces,
-    verifyCode: mockApiVerifyCode,
+    loginWithPassword: mockApiLoginWithPassword,
+    signupWithPassword: mockApiSignupWithPassword,
     setToken: mockApiSetToken,
     getMe: mockApiGetMe,
     issueCliToken: mockApiIssueCliToken,
@@ -71,20 +76,22 @@ vi.mock("@multica/core/api", () => ({
 
 vi.mock("@multica/core/types", () => ({}));
 
+let mockAllowSignup = true;
+vi.mock("@multica/core/config", () => ({
+  useConfigStore: Object.assign(
+    (selector?: (s: unknown) => unknown) => {
+      const state = { allowSignup: mockAllowSignup };
+      return selector ? selector(state) : state;
+    },
+    { getState: () => ({ allowSignup: mockAllowSignup }) },
+  ),
+}));
+
 // ---------------------------------------------------------------------------
 // Import after mocks
 // ---------------------------------------------------------------------------
 
 import { LoginPage, validateCliCallback } from "./login-page";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function getOTPInput() {
-  // input-otp renders a single hidden <input> that holds the OTP value
-  return screen.getByRole("textbox", { hidden: true });
-}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -94,8 +101,8 @@ describe("LoginPage", () => {
   const onSuccess = vi.fn();
 
   beforeEach(() => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.clearAllMocks();
+    mockAllowSignup = true;
     // Default: no existing session (getMe rejects when no auth)
     mockApiGetMe.mockRejectedValue(new Error("unauthorized"));
     localStorage.clear();
@@ -106,304 +113,138 @@ describe("LoginPage", () => {
     });
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   // -------------------------------------------------------------------------
-  // Email step rendering
+  // Credentials form rendering
   // -------------------------------------------------------------------------
 
-  it("renders email form with 'Sign in to Multica' title", () => {
+  it("renders the sign-in form with 'Sign in to Multica' title", () => {
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-    expect(
-      screen.getByText(/sign in to multica/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/enter your email to get a login code/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/sign in to multica/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /continue/i }),
+      screen.getByRole("button", { name: /^sign in$/i }),
     ).toBeInTheDocument();
   });
 
-  // -------------------------------------------------------------------------
-  // Email validation
-  // -------------------------------------------------------------------------
-
-  it("shows error when submitting with empty email", async () => {
-    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    // The Continue button is disabled when email is empty, so we submit the
-    // form programmatically the same way the component does — via form submit.
-    // Since the button is disabled, we directly call handleSendCode's logic
-    // by removing the required attr and submitting.
-    const emailInput = screen.getByLabelText(/email/i);
-    // The input has required + the button is disabled, so we need to type
-    // a space then clear to trigger the empty-email error path.
-    // Actually, the component guards `if (!email)` in handleSendCode.
-    // But the button is disabled when `!email`. Let's verify:
-    const button = screen.getByRole("button", { name: /continue/i });
-    expect(button).toBeDisabled();
-
-    // Type an email to enable button, then clear it — button becomes disabled again
-    const user = userEvent.setup();
-    await user.type(emailInput, "a");
-    expect(button).not.toBeDisabled();
-    await user.clear(emailInput);
-    expect(button).toBeDisabled();
-  });
-
-  // -------------------------------------------------------------------------
-  // sendCode flow
-  // -------------------------------------------------------------------------
-
-  it("calls sendCode on form submit with email", async () => {
-    mockSendCode.mockResolvedValueOnce(undefined);
-    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-
-    expect(mockSendCode).toHaveBeenCalledWith("test@example.com");
-  });
-
-  it("shows 'Sending code...' while submitting", async () => {
-    // Never resolve so loading stays true
-    mockSendCode.mockReturnValueOnce(new Promise(() => {}));
-    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-
-    expect(screen.getByText(/sending code/i)).toBeInTheDocument();
-  });
-
-  it("transitions to code step after successful sendCode", async () => {
-    mockSendCode.mockResolvedValueOnce(undefined);
-    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(/check your email/i),
-      ).toBeInTheDocument();
+  it("signs in with email and password", async () => {
+    mockLoginWithPassword.mockResolvedValueOnce({
+      id: "u-1",
+      email: "a@example.com",
+      name: "A",
     });
-    expect(screen.getByText(/test@example.com/)).toBeInTheDocument();
-  });
-
-  it("autofocuses the OTP input when the code step opens", async () => {
-    mockSendCode.mockResolvedValueOnce(undefined);
-    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/check your email/i)).toBeInTheDocument();
-    });
-
-    // The OTP field should be focused on mount so the user can type the code
-    // without clicking it first — important when repeatedly switching accounts.
-    expect(getOTPInput()).toHaveFocus();
-  });
-
-  it("shows error when sendCode fails", async () => {
-    mockSendCode.mockRejectedValueOnce(new Error("Rate limited"));
-    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Rate limited")).toBeInTheDocument();
-    });
-  });
-
-  it("shows generic error when sendCode throws non-Error", async () => {
-    mockSendCode.mockRejectedValueOnce("boom");
-    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(/failed to send code/i),
-      ).toBeInTheDocument();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Code verification
-  // -------------------------------------------------------------------------
-
-  it("calls verifyCode, seeds workspace list cache, then onSuccess", async () => {
-    mockSendCode.mockResolvedValueOnce(undefined);
-    mockVerifyCode.mockResolvedValueOnce(undefined);
     mockApiListWorkspaces.mockResolvedValueOnce([{ id: "ws-1" }]);
 
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
     const user = userEvent.setup();
-    // Step 1: email
-    await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
 
-    // Step 2: code
-    await waitFor(() => {
-      expect(
-        screen.getByText(/check your email/i),
-      ).toBeInTheDocument();
-    });
-
-    const otpInput = getOTPInput();
-    await user.type(otpInput, "123456");
+    await user.type(screen.getByLabelText(/email/i), "a@example.com");
+    await user.type(screen.getByLabelText(/password/i), "correct-horse");
+    await user.click(screen.getByRole("button", { name: /^sign in$/i }));
 
     await waitFor(() => {
-      expect(mockVerifyCode).toHaveBeenCalledWith(
-        "test@example.com",
-        "123456",
-      );
-      expect(mockApiListWorkspaces).toHaveBeenCalled();
-      // The workspace list is seeded into React Query so onSuccess can read
-      // it synchronously to compute a destination URL.
-      expect(mockSetQueryData).toHaveBeenCalledWith(
-        expect.arrayContaining(["workspaces", "list"]),
-        [{ id: "ws-1" }],
+      expect(mockLoginWithPassword).toHaveBeenCalledWith(
+        "a@example.com",
+        "correct-horse",
       );
       expect(onSuccess).toHaveBeenCalled();
     });
   });
 
-  it("shows error on invalid code", async () => {
-    mockSendCode.mockResolvedValueOnce(undefined);
-    mockVerifyCode.mockRejectedValueOnce(new Error("Invalid code"));
+  it("shows the server error when credentials are rejected", async () => {
+    mockLoginWithPassword.mockRejectedValueOnce(
+      new Error("invalid email or password"),
+    );
 
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
     const user = userEvent.setup();
-    await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
+
+    await user.type(screen.getByLabelText(/email/i), "a@example.com");
+    await user.type(screen.getByLabelText(/password/i), "wrong-password");
+    await user.click(screen.getByRole("button", { name: /^sign in$/i }));
 
     await waitFor(() => {
       expect(
-        screen.getByText(/check your email/i),
+        screen.getByText(/invalid email or password/i),
       ).toBeInTheDocument();
-    });
-
-    const otpInput = getOTPInput();
-    await user.type(otpInput, "000000");
-
-    await waitFor(() => {
-      expect(screen.getByText("Invalid code")).toBeInTheDocument();
     });
     expect(onSuccess).not.toHaveBeenCalled();
   });
 
-  // -------------------------------------------------------------------------
-  // Resend code with cooldown
-  // -------------------------------------------------------------------------
+  it("switches to signup and creates an account", async () => {
+    mockSignupWithPassword.mockResolvedValueOnce({
+      id: "u-1",
+      email: "a@example.com",
+      name: "A",
+    });
+    mockApiListWorkspaces.mockResolvedValueOnce([]);
 
-  it("disables resend button during cooldown", async () => {
-    mockSendCode.mockResolvedValue(undefined);
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
     const user = userEvent.setup();
-    await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
+
+    await user.click(screen.getByRole("button", { name: /need an account/i }));
+    await user.type(screen.getByLabelText(/email/i), "a@example.com");
+    await user.type(screen.getByLabelText(/password/i), "correct-horse");
+    await user.click(screen.getByRole("button", { name: /^create account$/i }));
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/check your email/i),
-      ).toBeInTheDocument();
+      expect(mockSignupWithPassword).toHaveBeenCalledWith(
+        "a@example.com",
+        "correct-horse",
+      );
+      expect(onSuccess).toHaveBeenCalled();
     });
-
-    // After transitioning to code step, cooldown is 60s
-    const resendBtn = screen.getByRole("button", { name: /resend in/i });
-    expect(resendBtn).toBeDisabled();
   });
 
-  it("shows resend button with cooldown text after sending code", async () => {
-    mockSendCode.mockResolvedValue(undefined);
+  it("rejects a short password before calling the server", async () => {
+    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
     const user = userEvent.setup();
-    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
 
-    await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
+    await user.click(screen.getByRole("button", { name: /need an account/i }));
+    await user.type(screen.getByLabelText(/email/i), "a@example.com");
+    await user.type(screen.getByLabelText(/password/i), "short7!");
+    await user.click(screen.getByRole("button", { name: /^create account$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/check your email/i)).toBeInTheDocument();
+      expect(screen.getByText(/at least 8 characters/i)).toBeInTheDocument();
     });
-
-    // After transition, resend shows cooldown text and is disabled
-    expect(screen.getByText(/resend in/i)).toBeInTheDocument();
+    expect(mockSignupWithPassword).not.toHaveBeenCalled();
   });
 
-  it("calls sendCode again when resend is clicked after cooldown", async () => {
-    mockSendCode.mockResolvedValue(undefined);
+  it("hides the signup switch when the deployment disallows signup", () => {
+    mockAllowSignup = false;
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/check your email/i)).toBeInTheDocument();
-    });
-
-    // sendCode was called once for the initial send
-    expect(mockSendCode).toHaveBeenCalledTimes(1);
-
-    // Advance past the 60s cooldown one second at a time so React can
-    // process each setCooldown state update between ticks.
-    for (let i = 0; i < 61; i++) {
-      await act(async () => {
-        vi.advanceTimersByTime(1_000);
-      });
-    }
-
-    await waitFor(() => {
-      expect(screen.getByText(/resend code/i)).toBeInTheDocument();
-    });
-
-    const resendBtn = screen.getByRole("button", { name: /resend code/i });
-    expect(resendBtn).not.toBeDisabled();
-
-    await user.click(resendBtn);
-    expect(mockSendCode).toHaveBeenCalledTimes(2);
+    expect(
+      screen.queryByRole("button", { name: /need an account/i }),
+    ).not.toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------------
-  // Google OAuth
+  // CLI callback — credential path
   // -------------------------------------------------------------------------
 
-  it("renders Google OAuth button when google prop provided", () => {
-    render(
+  it("redirects to the CLI callback with the token instead of calling onSuccess", async () => {
+    mockApiLoginWithPassword.mockResolvedValueOnce({
+      token: "cli-token",
+      user: { id: "u-1" },
+    });
+
+    renderWithI18n(
       <LoginPage
         onSuccess={onSuccess}
-        google={{ clientId: "goog-123", redirectUri: "http://localhost/cb" }}
+        cliCallback={{ url: "http://localhost:51234/callback", state: "st-1" }}
       />,
     );
-    expect(
-      screen.getByRole("button", { name: /continue with google/i }),
-    ).toBeInTheDocument();
-  });
+    const user = userEvent.setup();
 
-  it("hides Google OAuth button when google prop omitted", () => {
-    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-    expect(
-      screen.queryByRole("button", { name: /continue with google/i }),
-    ).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText(/email/i), "a@example.com");
+    await user.type(screen.getByLabelText(/password/i), "correct-horse");
+    await user.click(screen.getByRole("button", { name: /^sign in$/i }));
+
+    await waitFor(() => {
+      expect(window.location.href).toContain("token=cli-token");
+    });
+    expect(onSuccess).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
@@ -421,7 +262,7 @@ describe("LoginPage", () => {
         name: "Test User",
       });
 
-    render(
+    renderWithI18n(
       <LoginPage
         onSuccess={onSuccess}
         cliCallback={{ url: "http://localhost:9876/callback", state: "abc" }}
@@ -429,9 +270,7 @@ describe("LoginPage", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/authorize cli/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/authorize cli/i)).toBeInTheDocument();
     });
     expect(screen.getByText(/user@example.com/)).toBeInTheDocument();
     expect(
@@ -454,7 +293,7 @@ describe("LoginPage", () => {
       });
     const onTokenObtained = vi.fn();
 
-    render(
+    renderWithI18n(
       <LoginPage
         onSuccess={onSuccess}
         onTokenObtained={onTokenObtained}
@@ -463,9 +302,7 @@ describe("LoginPage", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/authorize cli/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/authorize cli/i)).toBeInTheDocument();
     });
 
     const user = userEvent.setup();
@@ -477,7 +314,7 @@ describe("LoginPage", () => {
     );
   });
 
-  it("'Use a different account' returns to email step", async () => {
+  it("'Use a different account' returns to the sign-in form", async () => {
     localStorage.setItem("multica_token", "existing-jwt");
     // Cookie attempt fails, localStorage fallback succeeds
     mockApiGetMe
@@ -488,7 +325,7 @@ describe("LoginPage", () => {
         name: "Test User",
       });
 
-    render(
+    renderWithI18n(
       <LoginPage
         onSuccess={onSuccess}
         cliCallback={{ url: "http://localhost:9876/callback", state: "abc" }}
@@ -496,9 +333,7 @@ describe("LoginPage", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText(/authorize cli/i),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/authorize cli/i)).toBeInTheDocument();
     });
 
     const user = userEvent.setup();
@@ -506,14 +341,8 @@ describe("LoginPage", () => {
       screen.getByRole("button", { name: /use a different account/i }),
     );
 
-    expect(
-      screen.getByText(/sign in to multica/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/sign in to multica/i)).toBeInTheDocument();
   });
-
-  // -------------------------------------------------------------------------
-  // CLI callback — cookie-based session (no localStorage token)
-  // -------------------------------------------------------------------------
 
   it("detects cookie-based session and shows cli_confirm when no localStorage token", async () => {
     // No localStorage token — getMe succeeds via HttpOnly cookie
@@ -523,7 +352,7 @@ describe("LoginPage", () => {
       name: "Cookie User",
     });
 
-    render(
+    renderWithI18n(
       <LoginPage
         onSuccess={onSuccess}
         cliCallback={{ url: "http://localhost:9876/callback", state: "abc" }}
@@ -546,7 +375,7 @@ describe("LoginPage", () => {
     mockApiIssueCliToken.mockResolvedValueOnce({ token: "fresh-jwt" });
     const onTokenObtained = vi.fn();
 
-    render(
+    renderWithI18n(
       <LoginPage
         onSuccess={onSuccess}
         onTokenObtained={onTokenObtained}
@@ -571,58 +400,11 @@ describe("LoginPage", () => {
   });
 
   // -------------------------------------------------------------------------
-  // CLI callback — code verification redirects
-  // -------------------------------------------------------------------------
-
-  it("CLI code verification redirects to callback URL", async () => {
-    mockSendCode.mockResolvedValueOnce(undefined);
-    mockApiVerifyCode.mockResolvedValueOnce({ token: "new-jwt-token" });
-    const onTokenObtained = vi.fn();
-
-    render(
-      <LoginPage
-        onSuccess={onSuccess}
-        onTokenObtained={onTokenObtained}
-        cliCallback={{ url: "http://localhost:9876/callback", state: "xyz" }}
-      />,
-    );
-
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText(/email/i), "cli@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(/check your email/i),
-      ).toBeInTheDocument();
-    });
-
-    const otpInput = getOTPInput();
-    await user.type(otpInput, "654321");
-
-    await waitFor(() => {
-      expect(mockApiVerifyCode).toHaveBeenCalledWith(
-        "cli@example.com",
-        "654321",
-      );
-      expect(onTokenObtained).toHaveBeenCalled();
-      expect(window.location.href).toContain(
-        "http://localhost:9876/callback?token=new-jwt-token&state=xyz",
-      );
-    });
-
-    // Normal verifyCode should NOT be called in CLI path
-    expect(mockVerifyCode).not.toHaveBeenCalled();
-    // onSuccess should NOT be called in CLI path — redirect handles it
-    expect(onSuccess).not.toHaveBeenCalled();
-  });
-
-  // -------------------------------------------------------------------------
   // Logo prop
   // -------------------------------------------------------------------------
 
   it("renders logo when provided", () => {
-    render(
+    renderWithI18n(
       <LoginPage
         onSuccess={onSuccess}
         logo={<div data-testid="custom-logo">Logo</div>}
@@ -640,31 +422,23 @@ describe("LoginPage", () => {
   // onTokenObtained callback
   // -------------------------------------------------------------------------
 
-  it("calls onTokenObtained after successful verification", async () => {
-    mockSendCode.mockResolvedValueOnce(undefined);
-    mockVerifyCode.mockResolvedValueOnce(undefined);
+  it("calls onTokenObtained after successful sign-in", async () => {
+    mockLoginWithPassword.mockResolvedValueOnce({
+      id: "u-1",
+      email: "test@example.com",
+      name: "A",
+    });
     mockApiListWorkspaces.mockResolvedValueOnce([{ id: "ws-1" }]);
     const onTokenObtained = vi.fn();
 
-    render(
-      <LoginPage
-        onSuccess={onSuccess}
-        onTokenObtained={onTokenObtained}
-      />,
+    renderWithI18n(
+      <LoginPage onSuccess={onSuccess} onTokenObtained={onTokenObtained} />,
     );
 
     const user = userEvent.setup();
     await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(/check your email/i),
-      ).toBeInTheDocument();
-    });
-
-    const otpInput = getOTPInput();
-    await user.type(otpInput, "123456");
+    await user.type(screen.getByLabelText(/password/i), "correct-horse");
+    await user.click(screen.getByRole("button", { name: /^sign in$/i }));
 
     await waitFor(() => {
       expect(onTokenObtained).toHaveBeenCalled();
@@ -673,30 +447,18 @@ describe("LoginPage", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Back button on code step
+  // extra slot
   // -------------------------------------------------------------------------
 
-  it("back button returns to email step", async () => {
-    mockSendCode.mockResolvedValueOnce(undefined);
-    renderWithI18n(<LoginPage onSuccess={onSuccess} />);
-
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText(/email/i), "test@example.com");
-    await user.click(screen.getByRole("button", { name: /continue/i }));
-
-    await waitFor(() => {
-      expect(
-        screen.getByText(/check your email/i),
-      ).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole("button", { name: /back/i }));
-
-    expect(
-      screen.getByText(/sign in to multica/i),
-    ).toBeInTheDocument();
+  it("renders the extra slot when provided", () => {
+    renderWithI18n(
+      <LoginPage
+        onSuccess={onSuccess}
+        extra={<div data-testid="extra-slot">extra</div>}
+      />,
+    );
+    expect(screen.getByTestId("extra-slot")).toBeInTheDocument();
   });
-
 });
 
 // ---------------------------------------------------------------------------
