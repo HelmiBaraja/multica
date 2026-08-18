@@ -80,8 +80,12 @@ Nullable, no default, no index — `email` is already unique, so no
 
 ### Queries
 
-`server/pkg/db/queries/user.sql`: add `password_hash` to `CreateUser`, add
-`SetUserPasswordHash`. Regenerate with `make sqlc`.
+`server/pkg/db/queries/user.sql`: add `password_hash` to `CreateUser`.
+Regenerate with `make sqlc`.
+
+No `SetUserPasswordHash` query: nothing in this change updates an existing
+user's password, since password change and reset are out of scope. It arrives
+with the feature that needs it.
 
 ### Dependency
 
@@ -143,6 +147,11 @@ force. `authVerifyRL` itself is removed with the OTP routes.
 - `SendCode`, `VerifyCode`, `GoogleLogin` and their request/response types
 - `generateCode`, `isDevVerificationCode`, `isSixDigitCode`,
   `devVerificationCodeEnv`
+- `findOrCreateUser` and `isProductionEnv`, which lose their only callers with
+  the handlers above. Password signup creates the user itself, because signup
+  must reject an existing account rather than log into it. `TestFindOrCreateUserGating`
+  goes with them; `TestSignupGating` stays, since it tests `checkSignupAllowed`
+  directly and that gate is what password signup depends on.
 - Routes `/auth/send-code`, `/auth/verify-code`, `/auth/google`
 - `server/pkg/db/queries/verification_code.sql` and its generated code
 - `SendVerificationCode` from `server/internal/service/email.go`
