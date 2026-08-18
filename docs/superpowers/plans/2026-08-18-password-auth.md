@@ -284,6 +284,8 @@ git commit -m "refactor(auth): extract completeLogin from VerifyCode and GoogleL
 
 Create `server/internal/handler/auth_password_test.go`. These use the same `testHandler` harness as `handler_test.go`, which is constructed with `Config{AllowSignup: true}`.
 
+**On the local `postJSON` helper:** the package already has `newRequest(method, path, body)` at `handler_test.go:182`, and normally you would reuse it rather than add a parallel abstraction. Do not reuse it here. It sets `X-User-ID` and `X-Workspace-ID` on every request, which are the headers of an *authenticated* caller. Signup and login are anonymous public endpoints, and a test that sends a user id while claiming to be a brand-new visitor is lying about the scenario. `postJSON` also differs in shape: it executes the handler and returns the recorder. Say this in a comment so the next reader does not "fix" it back.
+
 ```go
 package handler
 
@@ -296,7 +298,10 @@ import (
 	"testing"
 )
 
-// postJSON issues a JSON request against a handler and returns the recorder.
+// postJSON issues an anonymous JSON request against a handler and returns the
+// recorder. Deliberately not handler_test.go's newRequest: that helper stamps
+// X-User-ID and X-Workspace-ID, and signup/login are public endpoints whose
+// callers have no session yet.
 func postJSON(t *testing.T, h http.HandlerFunc, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	raw, err := json.Marshal(body)
@@ -508,13 +513,17 @@ Add `"golang.org/x/crypto/bcrypt"` to the import block.
 cd server && go get golang.org/x/crypto@latest && go mod tidy
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 5: Run the tests to verify they pass — and that they actually ran**
 
 ```bash
 cd server && go test ./internal/handler -run TestPasswordSignup -count=1 -v
 ```
 
-Expected: PASS — all four tests.
+Expected: PASS — all four tests, each appearing by name as `--- PASS: TestPasswordSignup...`.
+
+**Check for a skip, not just for `ok`.** `TestMain` at `handler_test.go:44-53` calls `os.Exit(0)` when the database is unreachable, printing `Skipping tests: ...`. A skipped run therefore reports `ok` with zero tests executed, which is indistinguishable from success if you only read the last line. If the output contains `Skipping tests:` or shows no `--- PASS` lines, the suite did not run — treat that as a failure and report it, do not record it as a pass.
+
+A PostgreSQL container is running on 127.0.0.1:5432 and `TestMain` defaults to `postgres://multica:multica@localhost:5432/multica?sslmode=disable`, so the suite should connect without any environment setup.
 
 - [ ] **Step 6: Commit**
 
