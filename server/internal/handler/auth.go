@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // SignupError represents signup restriction errors
@@ -110,6 +111,20 @@ type VerifyCodeRequest struct {
 	Email string `json:"email"`
 	Code  string `json:"code"`
 }
+
+type PasswordSignupRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+	Name     string `json:"name"`
+}
+
+const minPasswordLength = 8
+
+// errInvalidCredentials is the ONLY failure string the login endpoint may
+// return. Distinguishing "no account", "no password set", and "wrong
+// password" turns the endpoint into an account-enumeration oracle, so all
+// three collapse to this one message.
+const errInvalidCredentials = "invalid email or password"
 
 func generateCode() (string, error) {
 	var buf [4]byte
@@ -321,6 +336,87 @@ func contains(slice []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// PasswordSignup creates an account from an email and password alone. It is
+// gated by the same checkSignupAllowed policy as every other entry point, so
+// ALLOW_SIGNUP and the email/domain allowlists apply unchanged.
+func (h *Handler) PasswordSignup(w http.ResponseWriter, r *http.Request) {
+	var req PasswordSignupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if email == "" || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "email and password are required")
+		return
+	}
+	if len([]rune(req.Password)) < minPasswordLength {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("password must be at least %d characters", minPasswordLength))
+		return
+	}
+	if auth.IsTemporarilyDisabledUserEmail(email) {
+		writeError(w, http.StatusForbidden, auth.TemporarilyDisabledUserError)
+		return
+	}
+
+	// Signup is an explicit create: an existing account is a conflict, not a
+	// login. Silently logging the caller in would let anyone who guesses an
+	// email discover that it is registered.
+	_, err := h.Queries.GetUserByEmail(r.Context(), email)
+	if err == nil {
+		writeError(w, http.StatusConflict, "an account with this email already exists")
+		return
+	}
+	if !isNotFound(err) {
+		writeError(w, http.StatusInternalServerError, "failed to create account")
+		return
+	}
+
+	if err := h.checkSignupAllowed(email, true); err != nil {
+		var signupErr SignupError
+		if errors.As(err, &signupErr) {
+			writeError(w, http.StatusForbidden, signupErr.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to create account")
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create account")
+		return
+	}
+
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = email
+		if at := strings.Index(email, "@"); at > 0 {
+			name = email[:at]
+		}
+	}
+
+	user, err := h.Queries.CreateUser(r.Context(), db.CreateUserParams{
+		Name:         name,
+		Email:        email,
+		PasswordHash: pgtype.Text{String: string(hash), Valid: true},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create account")
+		return
+	}
+
+	// Signup analytics live at the call site, matching the other entry
+	// points, so each one stamps its own auth_method.
+	evt := analytics.Signup(uuidToString(user.ID), user.Email, signupSourceFromRequest(r))
+	evt.Properties["auth_method"] = "password"
+	obsmetrics.RecordEvent(h.Analytics, h.Metrics, evt)
+
+	slog.Info("user signed up with password", append(logger.RequestAttrs(r), "user_id", uuidToString(user.ID), "email", user.Email)...)
+	h.completeLogin(w, r, user, auth.AuthTokenTTL())
 }
 
 func (h *Handler) SendCode(w http.ResponseWriter, r *http.Request) {
