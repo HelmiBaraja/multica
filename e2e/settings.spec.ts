@@ -22,20 +22,19 @@ test.describe("Settings", () => {
     const newName = "Renamed WS " + Date.now();
     await nameInput.fill(newName);
 
-    // Save
-    await page.locator("button", { hasText: "Save" }).click();
-
-    await expect(page.getByText("Workspace settings saved").first()).toBeVisible({ timeout: 5000 });
-
-    // Sidebar should reflect the new name WITHOUT page refresh
-    await expect(page.getByRole("button", { name: new RegExp(newName) }).first()).toBeVisible();
+    // Workspace details auto-save (MUL-6243 settings rework): there is no Save
+    // button any more, so the sidebar update IS the assertion — it only lands
+    // once the debounced write has been accepted by the server.
+    await expect(page.getByRole("button", { name: new RegExp(newName) }).first()).toBeVisible({
+      timeout: 15000,
+    });
 
     // Restore original name so other tests aren't affected
     await nameInput.clear();
     await nameInput.fill(originalName.trim());
-    await page.locator("button", { hasText: "Save" }).click();
-    await expect(page.getByText("Workspace settings saved").first()).toBeVisible({ timeout: 5000 });
-    await expect(page.getByRole("button", { name: new RegExp(originalName) }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: new RegExp(originalName) }).first()).toBeVisible({
+      timeout: 15000,
+    });
   });
 
   // Composio connect flow, fully mocked at the network boundary so it runs
