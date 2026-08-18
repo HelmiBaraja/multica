@@ -95,10 +95,12 @@ describe("authStore credentials", () => {
     const api = makeApi();
     const store = createAuthStore({ api, storage: makeStorage() });
 
-    await store.getState().signupWithPassword("alice@example.com", "correct-horse");
+    const result = await store.getState().signupWithPassword("alice@example.com", "correct-horse");
 
     expect(api.signupWithPassword).toHaveBeenCalledWith("alice@example.com", "correct-horse", undefined);
+    expect(result).toEqual(fakeUser);
     expect(store.getState().status).toBe("authenticated");
+    expect(store.getState().user).toEqual(fakeUser);
   });
 
   it("leaves the session unauthenticated when login rejects", async () => {
@@ -113,5 +115,6 @@ describe("authStore credentials", () => {
       store.getState().loginWithPassword("alice@example.com", "nope"),
     ).rejects.toThrow("invalid email or password");
     expect(store.getState().user).toBeNull();
+    expect(store.getState().status).not.toBe("authenticated");
   });
 });
