@@ -477,6 +477,13 @@ func (h *Handler) PasswordLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !user.PasswordHash.Valid || user.PasswordHash.String == "" {
+		// Same bcrypt round as the other two failure paths. Returning early
+		// here would make "account exists but has no password" measurably
+		// faster than both "no such account" and "wrong password" — and that
+		// set is exactly the pre-existing OTP/Google accounts, which is a
+		// useful thing for an attacker to enumerate. Identical bodies are not
+		// enough on their own; the timing has to match too.
+		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash(), []byte(req.Password))
 		writeError(w, http.StatusUnauthorized, errInvalidCredentials)
 		return
 	}
