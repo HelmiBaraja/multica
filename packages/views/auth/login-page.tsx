@@ -41,10 +41,6 @@ interface LoginPageProps {
   cliCallback?: CliCallbackConfig;
   /** Called after a token is obtained (e.g. to set cookies). */
   onTokenObtained?: () => void;
-  /** Slot rendered at the bottom of the sign-in card. The web shell uses
-   *  it for a "Prefer the desktop app?" prompt; desktop omits it (a
-   *  download prompt inside the app would be absurd). */
-  extra?: ReactNode;
 }
 
 /** Mirrors minPasswordLength in server/internal/handler/auth.go. */
@@ -89,7 +85,6 @@ export function LoginPage({
   onSuccess,
   cliCallback,
   onTokenObtained,
-  extra,
 }: LoginPageProps) {
   const { t } = useT("auth");
   const qc = useQueryClient();
@@ -344,7 +339,6 @@ export function LoginPage({
               )}
             </Button>
           )}
-          {extra && <div className="w-full pt-1 text-center">{extra}</div>}
         </CardFooter>
       </Card>
     </div>

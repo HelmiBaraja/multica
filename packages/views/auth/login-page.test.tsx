@@ -446,19 +446,6 @@ describe("LoginPage", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // extra slot
-  // -------------------------------------------------------------------------
-
-  it("renders the extra slot when provided", () => {
-    renderWithI18n(
-      <LoginPage
-        onSuccess={onSuccess}
-        extra={<div data-testid="extra-slot">extra</div>}
-      />,
-    );
-    expect(screen.getByTestId("extra-slot")).toBeInTheDocument();
-  });
 });
 
 // ---------------------------------------------------------------------------
