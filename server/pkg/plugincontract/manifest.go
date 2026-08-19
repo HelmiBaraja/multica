@@ -116,6 +116,27 @@ var fixedScopes = map[string]bool{
 	ScopeStorageWorkspace: true,
 }
 
+func hasScope(scopes []string, want string) bool {
+	for _, scope := range scopes {
+		if scope == want {
+			return true
+		}
+	}
+	return false
+}
+
+// eventReadScope maps each event onto the scope a plugin would have needed to
+// read the same content through the Action API.
+var eventReadScope = map[string]string{
+	EventIssueCreated:       ScopeIssuesRead,
+	EventIssueUpdated:       ScopeIssuesRead,
+	EventIssueStatusChanged: ScopeIssuesRead,
+	EventCommentCreated:     ScopeCommentsRead,
+	EventTaskStarted:        ScopeTasksRead,
+	EventTaskCompleted:      ScopeTasksRead,
+	EventTaskFailed:         ScopeTasksRead,
+}
+
 var knownEvents = map[string]bool{
 	EventIssueCreated:       true,
 	EventIssueUpdated:       true,
@@ -125,6 +146,11 @@ var knownEvents = map[string]bool{
 	EventTaskCompleted:      true,
 	EventTaskFailed:         true,
 }
+
+// IsKnownEvent reports whether an event may be subscribed to by a manifest.
+// Exported so the dispatcher cannot publish an event no plugin could ever
+// receive — the two lists have to agree, and only one of them is authoritative.
+func IsKnownEvent(event string) bool { return knownEvents[event] }
 
 var (
 	pluginKeySegmentPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`)
@@ -204,6 +230,10 @@ type ConfigField struct {
 	Required    bool     `json:"required,omitempty"`
 	Options     []string `json:"options,omitempty"`
 	Placeholder string   `json:"placeholder,omitempty"`
+	// Multiline asks the host to render a textarea. Only meaningful for string
+	// fields; without it a value that is a list of lines is unreadable in the
+	// generated form, which is the one thing the host owns rendering for.
+	Multiline bool `json:"multiline,omitempty"`
 }
 
 // ConfigSchema keeps declaration order so the generated form is stable across
@@ -246,7 +276,8 @@ func (c ConfigSchema) MarshalJSON() ([]byte, error) {
 			Required    bool     `json:"required,omitempty"`
 			Options     []string `json:"options,omitempty"`
 			Placeholder string   `json:"placeholder,omitempty"`
-		}{field.Type, field.Label, field.Description, field.Required, field.Options, field.Placeholder})
+			Multiline   bool     `json:"multiline,omitempty"`
+		}{field.Type, field.Label, field.Description, field.Required, field.Options, field.Placeholder, field.Multiline})
 		if err != nil {
 			return nil, err
 		}
@@ -452,6 +483,9 @@ func (m Manifest) validateConfig() error {
 			if len(field.Options) > 0 {
 				return fmt.Errorf("%s.options is only valid for enum fields", label)
 			}
+			if field.Multiline && field.Type != ConfigString {
+				return fmt.Errorf("%s.multiline is only valid for string fields", label)
+			}
 		case ConfigEnum:
 			if len(field.Options) == 0 {
 				return fmt.Errorf("%s.options must not be empty for enum fields", label)
@@ -471,6 +505,9 @@ func (m Manifest) validateConfig() error {
 			}
 		default:
 			return fmt.Errorf("%s.type is unsupported: %q", label, field.Type)
+		}
+		if field.Multiline && field.Type != ConfigString {
+			return fmt.Errorf("%s.multiline is only valid for string fields", label)
 		}
 		if err := validateDisplayText(label+".label", field.Label, 160); err != nil {
 			return err
@@ -590,6 +627,15 @@ func (m Manifest) validateContributions() error {
 					return fmt.Errorf("%s.events contains duplicate event %q", field, event)
 				}
 				eventSeen[event] = true
+				// An event PUSHES the same content the Action API would have
+				// required a scope to pull: issue.* carries the description,
+				// comment.created carries the body. Without this, subscribing is
+				// a way to receive what reading was not granted — one dataset
+				// with two standards. Enforced at install, so the consent screen
+				// shows the read scope the subscription actually implies.
+				if required := eventReadScope[event]; required != "" && !hasScope(m.Scopes, required) {
+					return fmt.Errorf("%s.events subscribes to %q, which delivers content requiring the %s scope", field, event, required)
+				}
 			}
 		} else if len(hook.Events) > 0 {
 			return fmt.Errorf("%s.events requires the event trigger", field)

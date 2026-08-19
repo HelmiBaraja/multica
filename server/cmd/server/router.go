@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/entitlement"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -42,6 +43,7 @@ import (
 	composiosdk "github.com/multica-ai/multica/server/pkg/composio"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
+	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
 var defaultOrigins = []string{
@@ -71,6 +73,8 @@ var corsAllowedHeaders = []string{
 	"X-Client-Version",
 	"X-Client-OS",
 	"X-Client-Capabilities",
+	// Sent by the host page when it relays a plugin surface's Action API call.
+	"X-Multica-Plugin-Installation",
 }
 
 // corsExposedHeaders lists response headers browser clients are allowed to read.
@@ -191,6 +195,13 @@ type RouterOptions struct {
 	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
 	// tests leave this nil and get the legacy synchronous behavior.
 	HeartbeatScheduler handler.HeartbeatScheduler
+	// LLMMaxRetries carries the parsed MULTICA_LLM_MAX_RETRIES budget. Unlike
+	// its three MULTICA_LLM_* siblings it is injected rather than read here,
+	// because an invalid value must fail the boot and only main() can exit —
+	// terminating the process from inside a router constructor would also kill
+	// any test that happened to have the variable set. nil means unset, which
+	// is what tests and NewRouter get.
+	LLMMaxRetries *llm.RetryOverride
 }
 
 func buildChannelSupervisor(
@@ -341,6 +352,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		LLMAPIKey:                strings.TrimSpace(os.Getenv("MULTICA_LLM_API_KEY")),
 		LLMBaseURL:               strings.TrimSpace(os.Getenv("MULTICA_LLM_BASE_URL")),
 		LLMDefaultModel:          strings.TrimSpace(os.Getenv("MULTICA_LLM_DEFAULT_MODEL")),
+		LLMMaxRetries:            opts.LLMMaxRetries,
 		ServerVersion:            normalizeServerVersion(version),
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
@@ -354,6 +366,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.TaskService.FeatureFlags = opts.FeatureFlags
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
+	entitlementClient, entitlementErr := entitlement.New(entitlement.Config{
+		Enabled:      envBool("MULTICA_ENTITLEMENT_POLICY_ENABLED", false),
+		BaseURL:      strings.TrimSpace(os.Getenv("MULTICA_ENTITLEMENT_POLICY_URL")),
+		ServiceToken: os.Getenv("MULTICA_ENTITLEMENT_SERVICE_TOKEN"),
+		Timeout:      envDuration("MULTICA_ENTITLEMENT_POLICY_TIMEOUT", 3*time.Second),
+		StaleGrace:   envNonNegativeDuration("MULTICA_ENTITLEMENT_STALE_GRACE", 15*time.Minute),
+		Observer:     opts.BusinessMetrics,
+	})
+	if entitlementErr != nil {
+		slog.Error("entitlement policy client disabled by invalid configuration", "error", entitlementErr)
+		opts.BusinessMetrics.RecordEntitlementConfigError()
+	} else if entitlementClient.Enabled() {
+		entitlementClient.SetEmergencyDisabled(envBool("MULTICA_ENTITLEMENT_EMERGENCY_DISABLED", false))
+		h.AutopilotService.Entitlements = entitlementClient
+		h.AutopilotService.QuotaMetrics = opts.BusinessMetrics
+	}
 	if opts.BusinessMetrics != nil {
 		// Wire the BusinessMetrics receiver into the cloud runtime client
 		// so every outbound Fleet/Gateway request feeds the
@@ -1001,10 +1029,38 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			slog.Error("plugins: secretbox.New failed; Plugin secrets disabled", "error", err)
 		} else if h.PluginService != nil {
 			h.PluginService.Secrets = box
+			// The same deployment key, kept raw as well. Sealing and signing
+			// need different things from it: a secret config value is sealed
+			// and later opened, while a hook signature must be REPRODUCED on
+			// demand, which a box cannot do. Each installation's signing secret
+			// is derived from this rather than stored, so no row holds a usable
+			// one.
+			h.PluginService.DeploymentKey = pluginKey
 			slog.Info("Plugin secret encryption enabled")
 		}
 	} else {
 		slog.Info("Plugin secrets disabled (MULTICA_PLUGIN_SECRET_KEY not set)")
+	}
+
+	// Hook engine. Event-triggered hooks are dispatched off the bus onto a
+	// worker pool: Bus.Publish runs listeners inline on the publishing request's
+	// goroutine, so anything that dials a third-party endpoint from there would
+	// put an outside server on the critical path of creating an issue.
+	if h.PluginService != nil {
+		h.PluginService.Callbacks = service.NewCallbackTokens()
+		// Omitted rather than sent relative: a handler receiving
+		// "/api/v1/plugin" cannot call anything with it, and a broken absolute
+		// URL is harder to diagnose than an absent one.
+		if publicURL := strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")); publicURL != "" {
+			h.PluginService.CallbackBaseURL = strings.TrimSuffix(publicURL, "/") + "/api/v1/plugin"
+		} else {
+			slog.Warn("plugins: MULTICA_PUBLIC_URL is not set; hook callbacks will carry no callback_url")
+		}
+		// The flag reaches the event path only through the service: a worker has
+		// no request to read it from.
+		h.PluginService.FeatureFlags = h.FeatureFlags
+		pluginEvents := service.NewPluginEventDispatcher(h.PluginService)
+		service.SubscribePluginEvents(bus, pluginEvents)
 	}
 
 	if opts.HeartbeatScheduler != nil {
@@ -1238,10 +1294,50 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	})
 
 	// Protected API routes
+	// Plugin Action API. Two kinds of caller reach these, and the difference is
+	// only in WHO the call acts as.
+	//
+	// A SURFACE has no credential: the iframe asks the host page over the
+	// postMessage bridge, and the host re-issues the call on the signed-in
+	// user's own session, naming the installation in a header the iframe cannot
+	// set for itself. That path goes through the ordinary Auth chain.
+	//
+	// A HOOK HANDLER — the plugin author's own server — has no session and
+	// never will, so it presents a plugin bearer token instead. PluginAuth
+	// routes that request past the session chain to the handler, which resolves
+	// the token itself; a request with neither credential is refused there.
+	//
+	// The workspace always comes from the installation, never from the client.
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.PluginAuth(middleware.Auth(queries, patCache, cloudPATVerifier)))
+		r.Route("/api/v1/plugin", func(r chi.Router) {
+			r.Get("/context", h.GetPluginContext)
+			r.Get("/issues/{id}", h.GetPluginIssue)
+			r.Patch("/issues/{id}", h.PatchPluginIssue)
+			r.Get("/issues/{id}/comments", h.ListPluginComments)
+			r.Post("/issues/{id}/comments", h.CreatePluginComment)
+			r.Get("/storage/{scope}", h.ListPluginStorage)
+			r.Get("/storage/{scope}/{key}", h.GetPluginStorage)
+			r.Put("/storage/{scope}/{key}", h.PutPluginStorage)
+			r.Delete("/storage/{scope}/{key}", h.DeletePluginStorage)
+			// ui / manual only. `event` is dispatched by the host off the event
+			// bus and never requested; `agent` arrives over MCP in PR 4.
+			r.Post("/hooks/{key}", h.InvokePluginHook)
+		})
+	})
+
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
 
+		// Plugin Action API. Called by the HOST PAGE on the signed-in user's
+		// session after a surface asks for something over the postMessage
+		// bridge — the iframe holds no credential and never reaches these
+		// directly. Which installation is speaking arrives in a header the
+		// host sets; the workspace is derived from that installation rather
+		// than trusted from the client, and membership is then checked
+		// against it. Sits in the user-scoped group for that reason: there is
+		// no workspace in the path to gate on.
 		// --- User-scoped routes (no workspace context required) ---
 		r.Get("/api/me", h.GetMe)
 		r.Patch("/api/me", h.UpdateMe)
@@ -1347,6 +1443,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// show before an installation exists.
 					r.Post("/plugins/preview", h.PreviewPlugin)
 					r.Post("/plugins", h.InstallPlugin)
+					r.Get("/plugins/{installationId}/invocations", h.ListPluginInvocations)
+					r.Post("/plugins/{installationId}/token", h.RotatePluginToken)
+					r.Delete("/plugins/{installationId}/token", h.RevokePluginToken)
 					r.Put("/plugins/{installationId}/config", h.ConfigurePlugin)
 					r.Post("/plugins/{installationId}/enable", h.EnablePlugin)
 					r.Post("/plugins/{installationId}/disable", h.DisablePlugin)
@@ -1686,6 +1785,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/", h.ListAutopilots)
 				r.Post("/", h.CreateAutopilot)
 				r.Get("/cron-preview", h.CronPreview)
+				r.Get("/usage", h.GetAutopilotQuotaUsage)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAutopilot)
 					r.Patch("/", h.UpdateAutopilot)

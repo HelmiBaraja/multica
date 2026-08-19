@@ -262,14 +262,71 @@ func TestValidateStorageKeyEnforcesTheKeyQuota(t *testing.T) {
 }
 
 func TestCapabilityMessageNamesTheMissingCapabilities(t *testing.T) {
+	// Asserted against an explicitly empty host set, not the shipped one: this
+	// covers the message, and tying it to whatever HostCapabilities happens to
+	// enable today makes every future capability flip fail a test that has
+	// nothing to say about the flip.
 	manifest := testManifest(t)
-	err := manifest.CheckCapabilities(plugincontract.HostCapabilities())
+	err := manifest.CheckCapabilities(plugincontract.Capabilities{})
 	if err == nil {
-		t.Fatal("expected the shipped host set to reject a surface contribution")
+		t.Fatal("an empty host set must reject every contribution")
 	}
 	message := capabilityMessage(err)
 	if !strings.Contains(message, "surface issue_panel") {
 		t.Fatalf("capabilityMessage = %q, want it to name the missing capability", message)
+	}
+}
+
+// Binds every shipped capability to the host code that actually runs it.
+//
+// The gate is only meaningful if it tracks what renders. A capability enabled
+// here with no mount point installs successfully and then never appears — the
+// exact silent failure the gate exists to prevent — and nothing else in the
+// build would notice, because the manifest is valid and the install succeeds.
+//
+// Each line names the host code that makes it true. Flipping one on means
+// changing this file too, in the same commit as its runtime.
+func TestShippedHostCapabilitiesRunTheSurfacesTheHostMounts(t *testing.T) {
+	shipped := plugincontract.HostCapabilities()
+
+	// packages/views/plugins/plugin-panel-section.tsx
+	if !shipped.SurfaceTypes[plugincontract.SurfaceIssuePanel] {
+		t.Fatal("issue_panel is mounted by PluginPanelSection and must be shipped")
+	}
+	// packages/views/plugins/plugin-modal-surface.tsx, opened from the issue
+	// actions menu by a person — never on the plugin's own initiative.
+	if !shipped.SurfaceTypes[plugincontract.SurfaceModal] {
+		t.Fatal("modal is mounted by PluginModalSurface and must be shipped")
+	}
+	// No host location exists for this one. Enabling it would install surfaces
+	// that never render.
+	if shipped.SurfaceTypes[plugincontract.SurfaceSidebarPanel] {
+		t.Fatal("sidebar_panel has no mount point yet; enabling it would install surfaces that never render")
+	}
+
+	// handler.InvokePluginHook serves ui and manual; service.PluginEventDispatcher
+	// serves event off the internal bus.
+	for _, trigger := range []string{plugincontract.TriggerUI, plugincontract.TriggerManual, plugincontract.TriggerEvent} {
+		if !shipped.HookTriggers[trigger] {
+			t.Fatalf("hook trigger %q has a host call site and must be shipped", trigger)
+		}
+	}
+	// The agent trigger is not a call site the host drives — it is a hook
+	// exposed to an agent as an MCP tool, which needs the daemon-side server.
+	if shipped.HookTriggers[plugincontract.TriggerAgent] {
+		t.Fatal("the agent trigger needs the daemon-side MCP server, which has not landed")
+	}
+
+	// service.callHookEndpoint speaks http and nothing else.
+	if !shipped.HookTransport[plugincontract.TransportHTTP] {
+		t.Fatal("the http transport is implemented by callHookEndpoint and must be shipped")
+	}
+	if shipped.HookTransport[plugincontract.TransportMCP] {
+		t.Fatal("the mcp transport has no implementation yet")
+	}
+
+	if shipped.ResourceTypes[plugincontract.ResourceSkill] {
+		t.Fatal("skill resources are enabled but the agent integration has not landed")
 	}
 }
 
