@@ -131,9 +131,8 @@ func (h *Handler) issueJWT(user db.User) (string, error) {
 // easy to omit in a hand-rolled copy, and omitting them yields a token the
 // browser cannot actually use.
 //
-// Signup analytics deliberately stay at the call sites: each entry point
-// stamps its own auth_method, and the Google path fires its event before a
-// profile-update step that must not move.
+// Signup analytics deliberately stay at the call site: it stamps its own
+// auth_method rather than this shared helper doing it generically.
 //
 // cdnTTL bounds only the CloudFront cookies. It is NOT the JWT lifetime,
 // which issueJWT takes from auth.AuthTokenTTL().

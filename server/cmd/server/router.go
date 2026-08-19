@@ -1142,8 +1142,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	trustedProxies := middleware.ParseTrustedProxies(os.Getenv("RATE_LIMIT_TRUSTED_PROXIES"))
 	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
 	// Password login is the brute-forceable endpoint: a wrong guess costs the
-	// attacker one request, so it gets a tighter budget than the OTP verify
-	// limiter it replaces (20/min).
+	// attacker one request, so it gets a tighter budget than signup.
 	authLoginRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_LOGIN", 10), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
 	r.With(authRL).Post("/auth/password/signup", h.PasswordSignup)
