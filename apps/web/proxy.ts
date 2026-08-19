@@ -90,24 +90,28 @@ export function proxy(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // --- Root path: redirect logged-in users to their last workspace ---
+  // --- Root path: app hosts open the app, never the landing page ---
+  // On an app/self-host origin `/` is the app's front door: logged-in users go
+  // to their last workspace, everyone else goes to /login (which resolves an
+  // already-authenticated visitor against their workspace list). The landing
+  // page stays reachable at /homepage.
+  //
   // The official cloud host also serves the public marketing site. Visiting
   // https://multica.ai/ must remain a public-site navigation even when a local
   // desktop/runtime session has fresh auth cookies; explicit app routes such
   // as /acme/issues and legacy /issues still route to the workspace app.
-  if (
-    pathname === "/" &&
-    hasSession &&
-    lastSlug &&
-    !isOfficialMarketingHost(req.nextUrl.hostname)
-  ) {
+  if (pathname === "/" && !isOfficialMarketingHost(req.nextUrl.hostname)) {
     const url = req.nextUrl.clone();
-    url.pathname = `/${lastSlug}/issues`;
+    if (hasSession && lastSlug) {
+      url.pathname = `/${lastSlug}/issues`;
+    } else {
+      url.pathname = "/login";
+    }
     return NextResponse.redirect(url);
   }
 
   // --- Default: forward locale header to RSC, no redirect/rewrite ---
-  // Covers logged-out root path, /login, /:slug/*, and everything else.
+  // Covers the marketing-host root path, /login, /:slug/*, and everything else.
   return nextWithLocale(req);
 }
 
