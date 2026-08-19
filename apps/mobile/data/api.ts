@@ -118,6 +118,11 @@ import {
   WorkspaceListSchema,
 } from "./schemas";
 import type { ZodType } from "zod";
+import {
+  AppConfigSchema,
+  EMPTY_APP_CONFIG,
+  type AppConfigResponse,
+} from "@multica/core/api";
 import { getCurrentSlug } from "./workspace-store";
 import { parseWithFallback } from "@/lib/parse-response";
 import { createRequestId } from "@/lib/request-id";
@@ -362,17 +367,21 @@ class ApiClient {
   }
 
   // --- Auth ---
-  async sendCode(email: string): Promise<void> {
-    await this.fetch<void>("/auth/send-code", {
+  async signupWithPassword(
+    email: string,
+    password: string,
+    name?: string,
+  ): Promise<LoginResponse> {
+    return this.fetch<LoginResponse>("/auth/password/signup", {
       method: "POST",
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, password, name }),
     });
   }
 
-  async verifyCode(email: string, code: string): Promise<LoginResponse> {
-    return this.fetch<LoginResponse>("/auth/verify-code", {
+  async loginWithPassword(email: string, password: string): Promise<LoginResponse> {
+    return this.fetch<LoginResponse>("/auth/password/login", {
       method: "POST",
-      body: JSON.stringify({ email, code }),
+      body: JSON.stringify({ email, password }),
     });
   }
 
@@ -382,6 +391,15 @@ class ApiClient {
       UserSchema,
       EMPTY_USER,
       { ...opts, endpoint: "getMe" },
+    );
+  }
+
+  async getConfig(opts?: { signal?: AbortSignal }): Promise<AppConfigResponse> {
+    return this.fetchValidated(
+      "/api/config",
+      AppConfigSchema,
+      EMPTY_APP_CONFIG,
+      { ...opts, endpoint: "getConfig" },
     );
   }
 
