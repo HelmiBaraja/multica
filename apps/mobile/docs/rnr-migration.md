@@ -91,10 +91,9 @@ These are generic primitives where RNR ships a near-identical equivalent. Replac
 | `components/ui/card.tsx` | 36 | `card` | Drop-in |
 | `components/ui/text.tsx` | 18 | `text` | Used everywhere; do this carefully (sweep all imports) |
 | `components/ui/autosize-textarea.tsx` | 89 | `textarea` | Check parity — auto-grow behaviour may need re-implementation on top of RNR's textarea |
-| `components/ui/otp-input.tsx` | 68 | (no RNR equivalent today) | Keep using `input-otp-native`, move under Tier B |
 | `components/ui/modal-close-button.tsx` | 25 | n/a | Trivial — folds into the `Dialog` close pattern after sheets migrate |
 
-Total: ~270 lines to replace. ~4 hours of work including caller sweeps.
+Total: ~200 lines to replace. ~3 hours of work including caller sweeps.
 
 ### Tier B — sheets / modals (apply the §3.2 waterfall)
 
