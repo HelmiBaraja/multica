@@ -27,8 +27,8 @@ function MulticaMark() {
 }
 
 // GitHub mark — inlined SVG (lucide-react dropped the Github icon for brand
-// trademark reasons). Path matches apps/web/features/landing/components/
-// shared.tsx GitHubMark.
+// trademark reasons). Path matches apps/docs/components/community-links.tsx
+// GitHubMark.
 function GitHubMark() {
   return (
     <svg
