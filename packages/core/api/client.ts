@@ -246,6 +246,8 @@ import {
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
   EMPTY_APP_CONFIG,
+  EMPTY_LOGIN_RESPONSE,
+  LoginResponseSchema,
   EMPTY_ATTACHMENT,
   EMPTY_CHAT_MESSAGE_LIST,
   EMPTY_CHAT_PENDING_TASK,
@@ -673,42 +675,27 @@ export class ApiClient {
   }
 
   // Auth
-  async sendCode(email: string): Promise<void> {
-    await this.fetch("/auth/send-code", {
-      method: "POST",
-      body: JSON.stringify({ email }),
-    });
-  }
-
-  async verifyCode(email: string, code: string): Promise<LoginResponse> {
-    return this.fetch("/auth/verify-code", {
-      method: "POST",
-      body: JSON.stringify({ email, code }),
-    });
-  }
-
-  async googleLogin(code: string, redirectUri: string): Promise<LoginResponse> {
-    return this.fetch("/auth/google", {
-      method: "POST",
-      body: JSON.stringify({ code, redirect_uri: redirectUri }),
-    });
-  }
-
   async signupWithPassword(
     email: string,
     password: string,
     name?: string,
   ): Promise<LoginResponse> {
-    return this.fetch("/auth/password/signup", {
+    const raw = await this.fetch<unknown>("/auth/password/signup", {
       method: "POST",
       body: JSON.stringify({ email, password, name }),
+    });
+    return parseWithFallback(raw, LoginResponseSchema, EMPTY_LOGIN_RESPONSE, {
+      endpoint: "POST /auth/password/signup",
     });
   }
 
   async loginWithPassword(email: string, password: string): Promise<LoginResponse> {
-    return this.fetch("/auth/password/login", {
+    const raw = await this.fetch<unknown>("/auth/password/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
+    });
+    return parseWithFallback(raw, LoginResponseSchema, EMPTY_LOGIN_RESPONSE, {
+      endpoint: "POST /auth/password/login",
     });
   }
 

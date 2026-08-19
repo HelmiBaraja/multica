@@ -136,11 +136,11 @@ describe("LoginPage", () => {
   });
 
   // Regression: #5009 — the "already authenticated on arrival" effect used to
-  // fire for fresh form logins too. verifyCode writes `user` while handleVerify
-  // is still fetching the workspace list, so the effect read an empty cache and
-  // raced handleSuccess with replace("/workspaces/new"); depending on the
-  // interleaving the user could end up stuck on the create-workspace page
-  // despite having workspaces.
+  // fire for fresh form logins too. The credential login call writes `user`
+  // while handleVerify is still fetching the workspace list, so the effect
+  // read an empty cache and raced handleSuccess with replace("/workspaces/new");
+  // depending on the interleaving the user could end up stuck on the
+  // create-workspace page despite having workspaces.
   describe("post-login redirect ownership (#5009)", () => {
     const onboardedUser = {
       id: "u1",
@@ -153,9 +153,9 @@ describe("LoginPage", () => {
       // now on came from the form".
       const wrapper = createWrapper();
       const { rerender } = render(<LoginPage />, { wrapper });
-      // verifyCode set the user; the workspace list fetch is still in flight
-      // (cache cold). The arrival effect must stay silent — handleSuccess
-      // owns this navigation.
+      // The credential login call set the user; the workspace list fetch is
+      // still in flight (cache cold). The arrival effect must stay silent —
+      // handleSuccess owns this navigation.
       authStateRef.state.user = onboardedUser;
       rerender(<LoginPage />);
 

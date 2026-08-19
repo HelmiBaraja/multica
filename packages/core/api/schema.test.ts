@@ -2,6 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { ApiClient, ApiError } from "./client";
 import { parseWithFallback } from "./schema";
+import {
+  AppConfigSchema,
+  EMPTY_APP_CONFIG,
+  EMPTY_LOGIN_RESPONSE,
+  LoginResponseSchema,
+} from "./schemas";
 
 // Helper: stub fetch with a single JSON response. Status defaults to 200.
 function stubFetchJson(body: unknown, status = 200) {
@@ -869,6 +875,42 @@ describe("ApiClient schema fallback", () => {
         action: "scheduled_decrease",
       });
     });
+  });
+});
+
+// LoginResponseSchema guards the two credential endpoints
+// (/auth/password/signup, /auth/password/login), which previously returned
+// unvalidated JSON straight to the auth store. Per the API-compat rule, any
+// endpoint response consumed by UI logic must pass through a schema.
+describe("LoginResponseSchema", () => {
+  it("keeps a login response usable when the server omits optional user fields", () => {
+    const parsed = parseWithFallback(
+      { token: "t-1", user: { id: "u-1", email: "a@example.com", name: "A" } },
+      LoginResponseSchema,
+      EMPTY_LOGIN_RESPONSE,
+      { endpoint: "TEST /auth/password/login" },
+    );
+    expect(parsed.token).toBe("t-1");
+    expect(parsed.user.email).toBe("a@example.com");
+  });
+
+  it("falls back rather than throwing when a login response is malformed", () => {
+    const parsed = parseWithFallback(
+      { token: 42, user: null },
+      LoginResponseSchema,
+      EMPTY_LOGIN_RESPONSE,
+      { endpoint: "TEST /auth/password/login" },
+    );
+    expect(parsed).toEqual(EMPTY_LOGIN_RESPONSE);
+  });
+});
+
+describe("AppConfigSchema", () => {
+  it("defaults allow_signup to true when the server omits it", () => {
+    const cfg = parseWithFallback({ cdn_domain: "" }, AppConfigSchema, EMPTY_APP_CONFIG, {
+      endpoint: "TEST /api/config",
+    });
+    expect(cfg.allow_signup).toBe(true);
   });
 });
 

@@ -111,11 +111,12 @@ function LoginPageContent() {
         });
       return;
     }
-    // Fresh form login (issue #5009): `user` was written by verifyCode while
-    // handleVerify was still fetching the workspace list, so this effect used
-    // to read the not-yet-seeded list cache and race handleSuccess with a
-    // replace to /workspaces/new. handleSuccess owns post-login navigation;
-    // this effect only serves visitors who arrived already authenticated.
+    // Fresh form login (issue #5009): `user` was written by the credential
+    // login call while it was still fetching the workspace list, so this
+    // effect used to read the not-yet-seeded list cache and race
+    // handleSuccess with a replace to /workspaces/new. handleSuccess owns
+    // post-login navigation; this effect only serves visitors who arrived
+    // already authenticated.
     if (settledLoggedOutRef.current) return;
     if (nextUrl) {
       router.replace(nextUrl);

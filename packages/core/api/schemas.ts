@@ -581,7 +581,6 @@ export interface AppConfigResponse {
   // (MUL-3254). Older servers omit the field; treat that as false.
   cdn_signed?: boolean;
   allow_signup: boolean;
-  google_client_id?: string;
   posthog_key?: string;
   posthog_host?: string;
   analytics_environment?: string;
@@ -786,7 +785,6 @@ export const AppConfigSchema = z.object({
   cdn_domain: z.string().default(""),
   cdn_signed: BooleanWithDefaultSchema(false),
   allow_signup: BooleanWithDefaultSchema(true),
-  google_client_id: OptionalStringSchema,
   posthog_key: OptionalStringSchema,
   posthog_host: OptionalStringSchema,
   analytics_environment: OptionalStringSchema,
@@ -803,7 +801,6 @@ export const EMPTY_APP_CONFIG: AppConfigResponse = {
   cdn_domain: "",
   cdn_signed: false,
   allow_signup: true,
-  google_client_id: "",
   daemon_server_url: "",
   daemon_app_url: "",
   workspace_creation_disabled: false,
@@ -1995,6 +1992,16 @@ export const EMPTY_USER: User = {
   created_at: "",
   updated_at: "",
 };
+
+// Response for the two credential endpoints (/auth/password/signup,
+// /auth/password/login). Consumed directly by the auth store, so it must
+// pass through a schema rather than a raw cast (API-compat rule).
+export const LoginResponseSchema = z.object({
+  token: z.string(),
+  user: UserSchema,
+}).loose();
+
+export const EMPTY_LOGIN_RESPONSE = { token: "", user: EMPTY_USER };
 
 // ---------------------------------------------------------------------------
 // Cross-workspace unread inbox summary (`/api/inbox/unread-summary` GET).
