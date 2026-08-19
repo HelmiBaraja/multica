@@ -58,11 +58,14 @@ import type {
   Workspace,
 } from "@multica/core/types";
 import {
+  AppConfigSchema,
+  EMPTY_APP_CONFIG,
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_TIMELINE_ENTRIES,
   IssueSchema,
   ListIssuesResponseSchema,
   TimelineEntriesSchema,
+  type AppConfigResponse,
 } from "@multica/core/api/schemas";
 import {
   ActiveTasksResponseSchema,
@@ -118,11 +121,6 @@ import {
   WorkspaceListSchema,
 } from "./schemas";
 import type { ZodType } from "zod";
-import {
-  AppConfigSchema,
-  EMPTY_APP_CONFIG,
-  type AppConfigResponse,
-} from "@multica/core/api";
 import { getCurrentSlug } from "./workspace-store";
 import { parseWithFallback } from "@/lib/parse-response";
 import { createRequestId } from "@/lib/request-id";
