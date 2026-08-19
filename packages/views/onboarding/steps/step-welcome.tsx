@@ -114,7 +114,7 @@ export function StepWelcome({
                       onboarding tab in case the desktop install
                       stalls and the user falls back here. */}
                   <a
-                    href="/download"
+                    href="https://github.com/multica-ai/multica/releases/latest"
                     target="_blank"
                     rel="noopener noreferrer"
                     className={buttonVariants({ size: "lg" })}
