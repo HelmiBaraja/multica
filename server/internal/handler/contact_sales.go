@@ -36,8 +36,10 @@ const (
 	contactSalesBodyLimit      = 16 * 1024
 )
 
-// contactSalesAllowedCompanySize is the closed enum the frontend dropdown
-// emits. Keep this in sync with `apps/web/features/landing/i18n/types.ts`.
+// contactSalesAllowedCompanySize is the closed enum the contact-sales form
+// submits. The in-app form that emitted it lived in the marketing landing
+// tree and was removed with it, so this endpoint currently has no caller in
+// this repo — keep this list in sync with whatever form posts here.
 var contactSalesAllowedCompanySize = []string{
 	"1-10",
 	"11-50",
