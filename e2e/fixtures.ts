@@ -12,6 +12,8 @@ import pg from "pg";
 // the same matches user intent.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || `http://localhost:${process.env.PORT || "8080"}`;
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://multica:multica@localhost:5432/multica?sslmode=disable";
+/** Fixed across the suite so a re-run can log into an account a previous run created. */
+const E2E_PASSWORD = "e2e-test-password";
 
 interface TestWorkspace {
   id: string;
@@ -54,63 +56,45 @@ export class TestApiClient {
   private seededIssueIds: string[] = [];
 
   async login(email: string, name: string) {
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      // Keep each E2E login isolated so previous test runs do not trip the
-      // per-email send-code rate limit.
-      await client.query("DELETE FROM verification_code WHERE email = $1", [email]);
+    // Signup is idempotent from the suite's point of view: a 409 means a
+    // previous run already created this account, so fall through to login.
+    // No DB round trip and no rate-limit cleanup is needed any more.
+    const password = E2E_PASSWORD;
 
-      // Step 1: Send verification code
-      const sendRes = await fetch(`${API_BASE}/auth/send-code`, {
+    const signupRes = await fetch(`${API_BASE}/auth/password/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password, name }),
+    });
+
+    let data: { token: string; user?: { name?: string } };
+    if (signupRes.ok) {
+      data = await signupRes.json();
+    } else if (signupRes.status === 409) {
+      const loginRes = await fetch(`${API_BASE}/auth/password/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, password }),
       });
-      if (!sendRes.ok) {
-        throw new Error(`send-code failed: ${sendRes.status}`);
+      if (!loginRes.ok) {
+        throw new Error(`password login failed: ${loginRes.status}`);
       }
-
-      // Step 2: Read code from database
-      const result = await client.query(
-        "SELECT code FROM verification_code WHERE email = $1 AND used = FALSE AND expires_at > now() ORDER BY created_at DESC LIMIT 1",
-        [email],
-      );
-      if (result.rows.length === 0) {
-        throw new Error(`No verification code found for ${email}`);
-      }
-
-      const configuredDevCode = process.env.MULTICA_DEV_VERIFICATION_CODE?.trim();
-      const code = configuredDevCode || result.rows[0].code;
-
-      // Step 3: Verify code to get JWT
-      const verifyRes = await fetch(`${API_BASE}/auth/verify-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
-      });
-      if (!verifyRes.ok) {
-        throw new Error(`verify-code failed: ${verifyRes.status}`);
-      }
-      const data = await verifyRes.json();
-
-      this.token = data.token;
-      this.email = email;
-
-      // Update user name if needed
-      if (name && data.user?.name !== name) {
-        await this.authedFetch("/api/me", {
-          method: "PATCH",
-          body: JSON.stringify({ name }),
-        });
-      }
-
-      await client.query("DELETE FROM verification_code WHERE email = $1", [email]);
-
-      return data;
-    } finally {
-      await client.end();
+      data = await loginRes.json();
+    } else {
+      throw new Error(`password signup failed: ${signupRes.status}`);
     }
+
+    this.token = data.token;
+    this.email = email;
+
+    if (name && data.user?.name !== name) {
+      await this.authedFetch("/api/me", {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      });
+    }
+
+    return data;
   }
 
   async getWorkspaces(): Promise<TestWorkspace[]> {
