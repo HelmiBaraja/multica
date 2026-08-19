@@ -407,17 +407,18 @@ done
 
 #### 2. Create a test user and token (automated auth)
 
-For deterministic local automation, set `MULTICA_DEV_VERIFICATION_CODE=888888`
-in your env file before starting the backend:
+Sign up and log in with email + password. Signup is gated by `ALLOW_SIGNUP`
+(default `true`) and, if set, the `ALLOWED_EMAILS`/`ALLOWED_EMAIL_DOMAINS`
+allowlists — the defaults are fine for local dev:
 
 ```bash
-curl -s -X POST "$SERVER/auth/send-code" \
+curl -s -X POST "$SERVER/auth/password/signup" \
   -H "Content-Type: application/json" \
-  -d '{"email": "dev@localhost"}'
+  -d '{"email": "dev@localhost", "password": "correct-horse-battery"}'
 
-JWT=$(curl -s -X POST "$SERVER/auth/verify-code" \
+JWT=$(curl -s -X POST "$SERVER/auth/password/login" \
   -H "Content-Type: application/json" \
-  -d '{"email": "dev@localhost", "code": "888888"}' | jq -r '.token')
+  -d '{"email": "dev@localhost", "password": "correct-horse-battery"}' | jq -r '.token')
 
 PAT=$(curl -s -X POST "$SERVER/api/tokens" \
   -H "Authorization: Bearer $JWT" \
@@ -511,9 +512,9 @@ This automatically:
 3. Starts and manages its own daemon instance
 4. Connects to the local backend
 
-Login in the Desktop UI with `dev@localhost` and the generated code from the
-backend logs. If you set `MULTICA_DEV_VERIFICATION_CODE=888888` before starting
-the backend, you can use `888888` instead.
+Sign up or log in in the Desktop UI with an email and password (e.g.
+`dev@localhost` / `correct-horse-battery`) — same `ALLOW_SIGNUP` gating as
+step 2 above.
 
 If the backend runs on a non-default port (worktree), create
 `apps/desktop/.env.development.local`:
