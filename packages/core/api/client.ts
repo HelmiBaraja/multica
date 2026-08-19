@@ -684,9 +684,18 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ email, password, name }),
     });
-    return parseWithFallback(raw, LoginResponseSchema, EMPTY_LOGIN_RESPONSE, {
+    const parsed = parseWithFallback(raw, LoginResponseSchema, EMPTY_LOGIN_RESPONSE, {
       endpoint: "POST /auth/password/signup",
     });
+    // A schema-fallback here means the server returned 200 with a body we cannot
+    // trust. Every other endpoint degrades gracefully; this one must not — an
+    // empty token would be written to storage and the session marked
+    // authenticated, leaving the client believing it is logged in while every
+    // subsequent request 401s.
+    if (!parsed.token) {
+      throw new ApiError("invalid credential response from server", 502, "Bad Gateway");
+    }
+    return parsed;
   }
 
   async loginWithPassword(email: string, password: string): Promise<LoginResponse> {
@@ -694,9 +703,18 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    return parseWithFallback(raw, LoginResponseSchema, EMPTY_LOGIN_RESPONSE, {
+    const parsed = parseWithFallback(raw, LoginResponseSchema, EMPTY_LOGIN_RESPONSE, {
       endpoint: "POST /auth/password/login",
     });
+    // A schema-fallback here means the server returned 200 with a body we cannot
+    // trust. Every other endpoint degrades gracefully; this one must not — an
+    // empty token would be written to storage and the session marked
+    // authenticated, leaving the client believing it is logged in while every
+    // subsequent request 401s.
+    if (!parsed.token) {
+      throw new ApiError("invalid credential response from server", 502, "Bad Gateway");
+    }
+    return parsed;
   }
 
   async logout(): Promise<void> {

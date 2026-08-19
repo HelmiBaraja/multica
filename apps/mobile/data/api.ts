@@ -61,9 +61,11 @@ import {
   AppConfigSchema,
   EMPTY_APP_CONFIG,
   EMPTY_LIST_ISSUES_RESPONSE,
+  EMPTY_LOGIN_RESPONSE,
   EMPTY_TIMELINE_ENTRIES,
   IssueSchema,
   ListIssuesResponseSchema,
+  LoginResponseSchema,
   TimelineEntriesSchema,
   type AppConfigResponse,
 } from "@multica/core/api/schemas";
@@ -370,17 +372,36 @@ class ApiClient {
     password: string,
     name?: string,
   ): Promise<LoginResponse> {
-    return this.fetch<LoginResponse>("/auth/password/signup", {
-      method: "POST",
-      body: JSON.stringify({ email, password, name }),
-    });
+    const parsed = await this.fetchValidatedWith(
+      "/auth/password/signup",
+      LoginResponseSchema,
+      EMPTY_LOGIN_RESPONSE,
+      { method: "POST", body: JSON.stringify({ email, password, name }) },
+      { endpoint: "POST /auth/password/signup" },
+    );
+    // A schema-fallback here means the server returned 200 with a body we
+    // cannot trust. Every other endpoint degrades gracefully; this one must
+    // not — an empty token would be written to secure storage and the
+    // session marked authenticated, leaving the client believing it is
+    // logged in while every subsequent request 401s.
+    if (!parsed.token) {
+      throw new ApiError("invalid credential response from server", 502);
+    }
+    return parsed;
   }
 
   async loginWithPassword(email: string, password: string): Promise<LoginResponse> {
-    return this.fetch<LoginResponse>("/auth/password/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
-    });
+    const parsed = await this.fetchValidatedWith(
+      "/auth/password/login",
+      LoginResponseSchema,
+      EMPTY_LOGIN_RESPONSE,
+      { method: "POST", body: JSON.stringify({ email, password }) },
+      { endpoint: "POST /auth/password/login" },
+    );
+    if (!parsed.token) {
+      throw new ApiError("invalid credential response from server", 502);
+    }
+    return parsed;
   }
 
   async getMe(opts?: { signal?: AbortSignal }): Promise<User> {

@@ -70,6 +70,70 @@ describe("ApiClient pull-request response schema", () => {
   });
 });
 
+describe("ApiClient password auth response schema", () => {
+  it("throws instead of returning a blank session when signup response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ token: 12345, user: {} }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").signupWithPassword("a@example.test", "hunter2"),
+    ).rejects.toThrow(ApiError);
+  });
+
+  it("throws instead of returning a blank session when login response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ not_a_token: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").loginWithPassword("a@example.test", "hunter2"),
+    ).rejects.toThrow(ApiError);
+  });
+
+  it("returns the parsed session on a well-formed login response", async () => {
+    const validUser = {
+      id: "user-1",
+      name: "Ada",
+      email: "ada@example.test",
+      avatar_url: null,
+      onboarded_at: null,
+      onboarding_questionnaire: {},
+      starter_content_state: null,
+      language: null,
+      profile_description: "",
+      timezone: null,
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ token: "abc123", user: validUser }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").loginWithPassword("ada@example.test", "hunter2"),
+    ).resolves.toEqual({ token: "abc123", user: validUser });
+  });
+});
+
 describe("ApiClient Plugin preview response schema", () => {
   it("degrades a malformed preview so a blank scope list is never shown as approval", async () => {
     vi.stubGlobal(
