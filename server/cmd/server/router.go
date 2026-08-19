@@ -1142,7 +1142,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	trustedProxies := middleware.ParseTrustedProxies(os.Getenv("RATE_LIMIT_TRUSTED_PROXIES"))
 	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
 	// Password login is the brute-forceable endpoint: a wrong guess costs the
-	// attacker one request, so it gets a tighter budget than signup.
+	// attacker one request, so its own budget is tight enough to meaningfully
+	// slow credential guessing while still tolerating a legitimate user
+	// mistyping their password a few times.
 	authLoginRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_LOGIN", 10), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
 	r.With(authRL).Post("/auth/password/signup", h.PasswordSignup)

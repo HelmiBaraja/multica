@@ -311,8 +311,8 @@ func (h *Handler) PasswordSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Signup analytics live at the call site, matching the other entry
-	// points, so each one stamps its own auth_method.
+	// Signup analytics live at the call site rather than in completeLogin,
+	// so it can stamp its own auth_method.
 	evt := analytics.Signup(uuidToString(user.ID), user.Email, signupSourceFromRequest(r))
 	evt.Properties["auth_method"] = "password"
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, evt)
