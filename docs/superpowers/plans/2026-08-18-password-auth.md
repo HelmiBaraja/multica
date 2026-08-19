@@ -2177,7 +2177,7 @@ git commit -m "refactor(auth): remove OTP and Google client code"
 **Files:**
 - Delete: `apps/web/app/(landing)/` (10 files), `apps/web/features/landing/` (39 files)
 - Create: `apps/web/app/page.tsx`
-- Modify: `apps/web/app/sitemap.ts:20`, `apps/web/app/robots.ts:10`, `apps/web/app/type-scale.test.ts:56`, `apps/web/app/custom.css:69-98`
+- Modify: `apps/web/app/sitemap.ts`, `apps/web/app/robots.ts`, `apps/web/app/type-scale.test.ts:56`, `apps/web/app/custom.css`, `apps/web/app/text-contrast.test.ts`
 
 **Interfaces:**
 - Produces: `/` redirects to `/login`
@@ -2241,14 +2241,18 @@ Expected: PASS.
 
 - [ ] **Step 6: Clean up the references**
 
-- `apps/web/app/sitemap.ts`: delete the `/changelog` entry. If `/` is the only survivor, keep just that.
+- `apps/web/app/sitemap.ts`: delete the `/about`, `/changelog`, and `/contact-sales` entries (a `/contact-sales` page was added after this plan was originally written — verify against the live file rather than trusting this list), leaving only the root `/` entry.
 - `apps/web/app/robots.ts`: change `allow: ["/", "/about", "/changelog"]` to `allow: ["/"]`.
 - `apps/web/app/type-scale.test.ts:56`: delete the `marketingPaths` constant and whatever exemption consumes it — no marketing ramp remains to exempt.
-- `apps/web/app/custom.css:69-98`: delete the `--font-serif` blocks that reference `--font-instrument-serif`. That variable was defined only by the deleted landing layout, so the stack now points at nothing. Check whether anything else uses `--font-serif` first:
+- `apps/web/app/custom.css`: delete the entire "Landing editorial serif" section (the comment block through the end of the file) — `.landing-light`, `.landing-serif`, and the CJK-locale rules keyed off them. Do **not** touch `--font-serif` itself: it is the app-wide serif token (set in `apps/web/app/layout.tsx`) with consumers in `apps/docs/`, `packages/ui/`, and `packages/views/onboarding/`. Confirm scope before deleting:
 
 ```bash
-grep -rn "font-serif" apps packages --include='*.css' --include='*.tsx' | grep -v node_modules
+grep -n "landing-light\|landing-serif" apps/web/app/custom.css
+grep -rn "landing-light\|landing-serif" apps packages --include='*.tsx' --include='*.ts' | grep -v node_modules
 ```
+
+  Every consumer should be inside the two directories deleted in Step 3, or the test file below.
+- `apps/web/app/text-contrast.test.ts`: delete the `landingCss()` helper and the `it.each` test that keeps `.landing-light`'s colors in sync with the app's base tokens — nothing left to keep in sync once `.landing-light` is gone.
 
 - [ ] **Step 7: Verify nothing references the landing feature**
 
