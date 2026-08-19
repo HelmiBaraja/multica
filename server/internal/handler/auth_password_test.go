@@ -124,6 +124,51 @@ func TestPasswordSignupHonoursSignupGate(t *testing.T) {
 	}
 }
 
+// On a closed instance, signup must not leak whether an email is already
+// registered: an existing account and an unknown email both have to return
+// the same status. Before this fix, PasswordSignup checked GetUserByEmail
+// before checkSignupAllowed, so an existing account got 409 while an unknown
+// one got 403 — exactly the account-existence signal PasswordLogin's
+// identical-401 design is built to hide.
+func TestPasswordSignupGateHidesAccountExistence(t *testing.T) {
+	// Create the account while signup is still open.
+	existing := signupFixture(t, "correct-horse")
+
+	prev := testHandler.cfg.AllowSignup
+	testHandler.cfg.AllowSignup = false
+	t.Cleanup(func() { testHandler.cfg.AllowSignup = prev })
+
+	unknown := uniqueEmail(t)
+
+	cases := []struct {
+		name  string
+		email string
+	}{
+		{"existing_account", existing},
+		{"unknown_email", unknown},
+	}
+
+	var statuses []int
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := postJSON(t, testHandler.PasswordSignup, "/auth/password/signup", map[string]string{
+				"email":    tc.email,
+				"password": "correct-horse",
+			})
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status: want 403, got %d (%s)", rec.Code, rec.Body.String())
+			}
+			statuses = append(statuses, rec.Code)
+		})
+	}
+
+	for i := 1; i < len(statuses); i++ {
+		if statuses[i] != statuses[0] {
+			t.Fatalf("signup-gate responses differ and leak account existence: %v", statuses)
+		}
+	}
+}
+
 func timeNowUnixNano() int64 { return time.Now().UnixNano() }
 
 // signupFixture creates an account and returns its email.

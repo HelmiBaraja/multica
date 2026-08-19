@@ -264,6 +264,25 @@ func (h *Handler) PasswordSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// checkSignupAllowed runs before the existence check on purpose: on a
+	// closed instance (ALLOW_SIGNUP=false / allowlist miss) every caller must
+	// get the same 403 regardless of whether the email is already
+	// registered, otherwise the 409-vs-403 split leaks the exact
+	// account-existence signal that PasswordLogin's identical-401 design is
+	// built to hide. It's a pure config check — no DB access — so reordering
+	// it ahead of GetUserByEmail doesn't change the open-signup case: an
+	// existing account there still hits GetUserByEmail and gets 409 before
+	// any write.
+	if err := h.checkSignupAllowed(email, true); err != nil {
+		var signupErr SignupError
+		if errors.As(err, &signupErr) {
+			writeError(w, http.StatusForbidden, signupErr.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to create account")
+		return
+	}
+
 	// Signup is an explicit create: an existing account is a conflict, not a
 	// login. Silently logging the caller in would let anyone who guesses an
 	// email discover that it is registered.
@@ -273,16 +292,6 @@ func (h *Handler) PasswordSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isNotFound(err) {
-		writeError(w, http.StatusInternalServerError, "failed to create account")
-		return
-	}
-
-	if err := h.checkSignupAllowed(email, true); err != nil {
-		var signupErr SignupError
-		if errors.As(err, &signupErr) {
-			writeError(w, http.StatusForbidden, signupErr.Error())
-			return
-		}
 		writeError(w, http.StatusInternalServerError, "failed to create account")
 		return
 	}
@@ -370,6 +379,15 @@ func (h *Handler) PasswordLogin(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.Queries.GetUserByEmail(r.Context(), email)
 	if err != nil {
+		// The response must stay a plain 401 regardless of cause — a real DB
+		// failure and an unknown email have to look identical to the caller.
+		// But log the DB failure case so a pool exhaustion / connection reset
+		// / timeout shows up as an error spike instead of blending invisibly
+		// into normal failed-login noise. The email is deliberately omitted:
+		// it is unauthenticated caller input and must not land in logs.
+		if !isNotFound(err) {
+			slog.Error("password login: user lookup failed", append(logger.RequestAttrs(r), "error", err)...)
+		}
 		// Spend a bcrypt round anyway so a missing account is not measurably
 		// faster than a wrong password.
 		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash(), []byte(req.Password))
