@@ -32,14 +32,9 @@ DATABASE_URL=postgres://multica:multica@localhost:${postgres_port}/${postgres_db
 
 PORT=${backend_port}
 JWT_SECRET=change-me-in-production
-MULTICA_DEV_VERIFICATION_CODE=888888
 MULTICA_SERVER_URL=ws://localhost:${backend_port}/ws
 MULTICA_PUBLIC_URL=http://localhost:${backend_port}
 MULTICA_APP_URL=${frontend_origin}
-
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-GOOGLE_REDIRECT_URI=${frontend_origin}/auth/callback
 
 FRONTEND_PORT=${frontend_port}
 FRONTEND_ORIGIN=${frontend_origin}

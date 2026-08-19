@@ -129,8 +129,6 @@ backend:
     # MULTICA_VCS_SECRET_KEY through existingSecret before connections work.
     # Set false to hide and reject the integration for this deployment.
     vcsIntegrationEnabled: true
-    googleClientId: ""
-    googleRedirectUri: http://multica.dev.lan/auth/callback
     s3Bucket: ""
     s3Region: us-west-2
     cloudfrontDomain: ""
